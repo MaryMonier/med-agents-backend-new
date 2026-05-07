@@ -10,4 +10,9 @@ const startServer = async () => {
   });
 };
 
+process.on('SIGINT', async () => {
+  console.log('Server shutting down...');
+  process.exit(0);
+});
+
 startServer();
