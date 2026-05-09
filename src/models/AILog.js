@@ -2,10 +2,10 @@ const mongoose = require('mongoose');
 
 const aiLogSchema = new mongoose.Schema({
   consultationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Consultation', required: true },
-  agentName: { 
-    type: String, 
+  agentName: {
+    type: String,
     enum: ['drugSafety', 'clinicalRec', 'reportGen', 'followup'],
-    required: true 
+    required: true
   },
   reasoningTrace: { type: String },
   tokensUsed: { type: Number },

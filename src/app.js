@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-
+const patientRouter = require("./patient/patient.router")
 const app = express();
 
 const limiter = rateLimit({
@@ -14,6 +14,7 @@ const limiter = rateLimit({
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+app.use("/patient",patientRouter)
 app.use(limiter);
 
 app.get('/', (req, res) => {
