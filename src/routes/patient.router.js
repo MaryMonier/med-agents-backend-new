@@ -1,4 +1,8 @@
-const { getAllPatients, getPatientById, createPatient, deletePatient, updatePatient } = require("./patient.controller")
+const { getAllPatients, 
+    getPatientById,
+     createPatient,
+     deletePatient, 
+     updatePatient } = require("../controllers/patient.controller")
 
 const router = require("express").Router()
 const authMiddleware = require("../middleware/auth.middleware")

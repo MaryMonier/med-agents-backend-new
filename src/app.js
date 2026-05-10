@@ -3,11 +3,11 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
-const patientRouter = require("./patient/patient.router")
 
 const errorHandler = require('./middleware/errorHandler');
 const piiSanitize = require('./middleware/piiSanitize');
 const authRoutes = require('./routes/auth.routes');
+const patientRouter = require("./routes/patient.router")
 const app = express();
 
 const limiter = rateLimit({
