@@ -5,7 +5,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   passwordHash: { type: String, required: true },
   role: { type: String, enum: ['doctor', 'admin'], default: 'doctor' },
-  specialty: { type: String },
+  specialty: { type: String, default: 'Internal Medicine'  },
   language: { type: String, enum: ['en', 'ar'], default: 'en' },
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
