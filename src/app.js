@@ -14,7 +14,7 @@ const limiter = rateLimit({
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-app.use("/patient",patientRouter)
+app.use("api/patient",patientRouter)
 app.use(limiter);
 
 app.get('/', (req, res) => {
