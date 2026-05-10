@@ -23,7 +23,7 @@ app.use(limiter);
 app.use(piiSanitize);
 
 app.use('/api/auth', authRoutes);
-app.use("api/patient",patientRouter)
+app.use("/api/patient",patientRouter)
 
 app.get('/', (req, res) => {
   res.json({ message: 'Med Agents API is running!' });

@@ -1,12 +1,13 @@
 const { getAllPatients, getPatientById, createPatient, deletePatient, updatePatient } = require("./patient.controller")
 
 const router = require("express").Router()
+const authMiddleware = require("../middleware/auth.middleware")
 
-router.get("/",getAllPatients)
-router.get("/:id",getPatientById)
-router.post("/",createPatient)
-router.delete("/:id",deletePatient)
-router.patch("/:id",updatePatient)
+router.get("/",authMiddleware,getAllPatients)
+router.get("/:id",authMiddleware,getPatientById)
+router.post("/",authMiddleware,createPatient)
+router.delete("/:id",authMiddleware,deletePatient)
+router.patch("/:id",authMiddleware,updatePatient)
 
 
 module.exports = router
