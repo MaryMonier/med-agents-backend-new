@@ -4,7 +4,7 @@ const router = require("express").Router()
 
 router.get("/",getAllPatients)
 router.get("/:id",getPatientById)
-router.get("/",createPatient)
+router.post("/",createPatient)
 router.delete("/:id",deletePatient)
 router.patch("/:id",updatePatient)
 
