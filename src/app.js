@@ -5,7 +5,8 @@ const rateLimit = require('express-rate-limit');
 const errorHandler = require('./middleware/errorHandler');
 const piiSanitize = require('./middleware/piiSanitize');
 const authRoutes = require('./routes/auth.routes');
-const followupRoutes = require('./routes/followupRoutes');
+const prescriptionRoutes = require('./routes/prescriptionRoutes');
+
 
 const app = express();
 
@@ -22,7 +23,7 @@ app.use(limiter);
 app.use(piiSanitize);
 
 app.use('/api/auth', authRoutes);
-app.use('/api/followups', followupRoutes);
+app.use('/api/prescriptions', prescriptionRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'Med Agents API is running!' });
