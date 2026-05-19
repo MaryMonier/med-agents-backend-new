@@ -1,9 +1,8 @@
-const { OpenAI } = require("openai");
+const { OPENAI_API_KEY } = require('../config/env');
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: OPENAI_API_KEY,
 });
-
 const runClinicalRecAgent = async ({
   rawInput = "",
   symptoms = [],
