@@ -3,6 +3,11 @@ const OpenAI = require("openai");
 const client = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
+const { GROQ_API_KEY } = require('../config/env');
+const Groq = require("groq-sdk");
+
+const client = new Groq({ apiKey: GROQ_API_KEY });
+
 const runClinicalRecAgent = async ({
   rawInput = "",
   symptoms = [],
@@ -16,17 +21,14 @@ const runClinicalRecAgent = async ({
 
   try {
     const response = await client.chat.completions.create({
-
-      model: "gpt-4o-mini",
+      model: "llama3-8b-8192",
       temperature: 0.1,
-      max_output_tokens: 500,
-
-      input: [
+      max_tokens: 500,
+      messages: [
         {
           role: "system",
           content: `
 You are a clinical recommendation assistant for doctors.
-
 STRICT RULES:
 - Respond ONLY in ${language === "ar" ? "Arabic" : "English"}
 - Output ONLY valid JSON
@@ -53,7 +55,7 @@ Return JSON:
       ],
     });
 
-const parsed = JSON.parse(response.choices[0].message.content);
+    const parsed = JSON.parse(response.choices[0].message.content);
 
     const allowedUrgency = ["low", "medium", "critical"];
 
@@ -66,9 +68,9 @@ const parsed = JSON.parse(response.choices[0].message.content);
     }
 
     return parsed;
+
   } catch (error) {
     console.error("AI Error:", error);
-
     return {
       error: true,
       message: "AI request failed",
