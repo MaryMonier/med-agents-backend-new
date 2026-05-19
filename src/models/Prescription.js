@@ -6,7 +6,6 @@ const medicationSchema = new mongoose.Schema({
   frequency: { type: String, required: true },
   duration: { type: String, required: true },
 });
-
 const prescriptionSchema = new mongoose.Schema({
   consultationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Consultation', required: true },
   patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true },
@@ -15,5 +14,4 @@ const prescriptionSchema = new mongoose.Schema({
   warnings: [{ type: String }],
   language: { type: String, enum: ['en', 'ar'], default: 'en' },
 }, { timestamps: true });
-
 module.exports = mongoose.model('Prescription', prescriptionSchema);

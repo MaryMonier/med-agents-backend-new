@@ -2,12 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const errorHandler = require('./middleware/errorHandler');
-const piiSanitize = require('./middleware/piiSanitize');
-const authRoutes = require('./routes/auth.routes');
-const prescriptionRoutes = require('./routes/prescriptionRoutes');
-
-
+const patientRouter = require("./patient/patient.router")
 const app = express();
 
 const limiter = rateLimit({
@@ -19,6 +14,7 @@ const limiter = rateLimit({
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+app.use("api/patient",patientRouter)
 app.use(limiter);
 app.use(piiSanitize);
 
