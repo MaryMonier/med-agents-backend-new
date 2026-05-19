@@ -16,9 +16,15 @@ app.use(cors());
 app.use(express.json());
 app.use("api/patient",patientRouter)
 app.use(limiter);
+app.use(piiSanitize);
+
+app.use('/api/auth', authRoutes);
+app.use('/api/prescriptions', prescriptionRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'Med Agents API is running!' });
 });
+
+app.use(errorHandler);
 
 module.exports = app;
