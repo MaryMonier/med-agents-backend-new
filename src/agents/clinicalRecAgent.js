@@ -1,8 +1,3 @@
-const { OPENAI_API_KEY } = require('../config/env');
-const OpenAI = require("openai");
-const client = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
 const { GROQ_API_KEY } = require('../config/env');
 const Groq = require("groq-sdk");
 
@@ -22,7 +17,7 @@ const runClinicalRecAgent = async ({
   try {
     const response = await client.chat.completions.create({
       model: "llama3-8b-8192",
-      temperature: 0.1,
+      temperature: 0.1,  
       max_tokens: 500,
       messages: [
         {
