@@ -1,5 +1,5 @@
 const { OPENAI_API_KEY } = require('../config/env');
-
+const OpenAI = require("openai");
 const client = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
@@ -15,7 +15,8 @@ const runClinicalRecAgent = async ({
       : "Not specified";
 
   try {
-    const response = await client.responses.create({
+    const response = await client.chat.completions.create({
+
       model: "gpt-4o-mini",
       temperature: 0.1,
       max_output_tokens: 500,
@@ -52,7 +53,7 @@ Return JSON:
       ],
     });
 
-    const parsed = JSON.parse(response.output_text);
+const parsed = JSON.parse(response.choices[0].message.content);
 
     const allowedUrgency = ["low", "medium", "critical"];
 
