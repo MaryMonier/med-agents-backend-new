@@ -13,6 +13,7 @@ const patientRouter = require('./patient/patient.router');
 
 // const patientRouter = require("./patient/patient.router")
 const consultationRoutes = require('./routes/consultationRoutes');
+const medicalAgentRouter = require('./routes/medicalAgentRoutes');
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.use('/api/patients', patientRouter);
 
 
 app.use('/api/consultations', consultationRoutes);
+app.use('/api/agent', medicalAgentRouter);
 
 
 app.get('/', (req, res) => {
