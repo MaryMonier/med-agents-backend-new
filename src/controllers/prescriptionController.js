@@ -55,7 +55,7 @@ const createPrescription = async (req, res, next) => {
       return next(err);
     }
 
-    if (consultation.doctorId.toString() !== req.user._id.toString()) {
+    if (consultation.doctorId.toString() !== req.user.id.toString()) {
       const err = new Error('Not authorized to prescribe for this consultation');
       err.status = 403;
       return next(err);
@@ -177,7 +177,7 @@ const updatePrescription = async (req, res, next) => {
 
     if (
       prescription.consultationId.doctorId.toString() !==
-      req.user._id.toString()
+      req.user.id.toString()
     ) {
       const err = new Error('Not authorized to update this prescription');
       err.status = 403;
@@ -243,7 +243,7 @@ const deletePrescription = async (req, res, next) => {
 
     const isDoctor =
       prescription.consultationId.doctorId.toString() ===
-      req.user._id.toString();
+      req.user.id.toString();
     const isAdmin = req.user.role === 'admin';
 
     if (!isDoctor && !isAdmin) {

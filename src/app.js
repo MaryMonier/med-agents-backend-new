@@ -2,12 +2,17 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+
 const errorHandler = require('./middleware/errorHandler');
 const piiSanitize = require('./middleware/piiSanitize');
 const authRoutes = require('./routes/auth.routes');
 const followupRoutes = require('./routes/followupRoutes');
 const prescriptionRoutes = require('./routes/prescriptionRoutes');
 const patientRouter = require('./patient/patient.router');
+
+
+// const patientRouter = require("./patient/patient.router")
+const consultationRoutes = require('./routes/consultationRoutes');
 
 const app = express();
 
@@ -27,6 +32,10 @@ app.use('/api/auth', authRoutes);
 app.use('/api/followups', followupRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/patients', patientRouter);
+
+
+app.use('/api/consultations', consultationRoutes);
+
 
 app.get('/', (req, res) => {
   res.json({ message: 'Med Agents API is running!' });
