@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const patientRouter = require("./patient/patient.router")
+const consultationRoutes = require('./routes/consultationRoutes');
 const app = express();
 
 const limiter = rateLimit({
@@ -20,6 +21,10 @@ app.use(piiSanitize);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
+
+
+app.use('/api/consultations', consultationRoutes);
+
 
 app.get('/', (req, res) => {
   res.json({ message: 'Med Agents API is running!' });
