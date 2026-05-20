@@ -16,7 +16,7 @@ const runClinicalRecAgent = async ({
 
   try {
     const response = await client.chat.completions.create({
-      model: "llama3-8b-8192",
+      model: "llama-3.3-70b-versatile",
       temperature: 0.1,  
       max_tokens: 500,
       messages: [
@@ -50,7 +50,9 @@ Return JSON:
       ],
     });
 
-    const parsed = JSON.parse(response.choices[0].message.content);
+   const raw = response.choices[0].message.content;
+const cleaned = raw.replace(/```json|```/g, '').trim();
+const parsed = JSON.parse(cleaned);
 
     const allowedUrgency = ["low", "medium", "critical"];
 
