@@ -13,9 +13,11 @@ const patientRouter = require('./patient/patient.router');
 
 // const patientRouter = require("./patient/patient.router")
 const consultationRoutes = require('./routes/consultationRoutes');
-const medicalAgentRouter = require('./routes/medicalAgentRoutes');
+// const medicalAgentRouter = require('./routes/medicalAgentRoutes');
 
 const app = express();
+
+const medicalAgentRouter = require('./routes/medicalAgentRoutes');
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -36,7 +38,9 @@ app.use('/api/patients', patientRouter);
 
 
 app.use('/api/consultations', consultationRoutes);
-app.use('/api/agent', medicalAgentRouter);
+// app.use('/api/agent', medicalAgentRouter);
+
+app.use('/api/medical-agent', medicalAgentRouter);
 
 
 app.get('/', (req, res) => {
@@ -44,5 +48,6 @@ app.get('/', (req, res) => {
 });
 
 app.use(errorHandler);
+
 
 module.exports = app;
