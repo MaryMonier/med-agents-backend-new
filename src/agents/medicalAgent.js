@@ -7,7 +7,7 @@ const runMedicalAgent = async ({ messages = [], language = 'en' }) => {
   try {
     const response = await client.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
-      temperature: 0.8,
+      temperature: 0.1,
       max_tokens: 500,
       messages: [
         {

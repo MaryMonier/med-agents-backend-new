@@ -19,9 +19,16 @@ const drugSafetyRoutes = require('./routes/drugSafetyRoutes');
 // const patientRouter = require("./patient/patient.router")
 // const medicalAgentRouter = require('./routes/medicalAgentRoutes');
 
+const followupAgentRouter = require('./routes/followupAgentRoutes');
+
 const app = express();
 
 const medicalAgentRouter = require('./routes/medicalAgentRoutes');
+
+
+const reportGenRoutes = require('./routes/reportGen.routes');
+
+
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -48,9 +55,13 @@ app.use('/api/consultations', consultationRoutes);
 
 app.use('/api/medical-agent', medicalAgentRouter);
 
+app.use('/api/followup-agent', followupAgentRouter);
+
 app.get('/', (req, res) => {
   res.json({ message: 'Med Agents API is running!' });
 });
+
+app.use('/api/report', reportGenRoutes);
 
 app.use(errorHandler);
 
