@@ -2,13 +2,26 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-
-
 const errorHandler = require('./middleware/errorHandler');
+// const piiSanitize = require('./middleware/piiSanitize');
+// const authRoutes = require('./routes/auth.routes');
+const patientRouter = require("./routes/patient.router")
+// const errorHandler = require('./middleware/errorHandler');
 const piiSanitize = require('./middleware/piiSanitize');
 const authRoutes = require('./routes/auth.routes');
-const patientRouter = require("./routes/patient.router")
+const followupRoutes = require('./routes/followupRoutes');
+const prescriptionRoutes = require('./routes/prescriptionRoutes');
+// const patientRouter = require('./patient/patient.router');
+const consultationRoutes = require('./routes/consultationRoutes');
+const drugSafetyRoutes = require('./routes/drugSafetyRoutes');
+
+
+// const patientRouter = require("./patient/patient.router")
+// const medicalAgentRouter = require('./routes/medicalAgentRoutes');
+
 const app = express();
+
+const medicalAgentRouter = require('./routes/medicalAgentRoutes');
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -23,12 +36,23 @@ app.use(limiter);
 app.use(piiSanitize);
 
 app.use('/api/auth', authRoutes);
+
 app.use("/api/patient",patientRouter)
+app.use('/api/followups', followupRoutes);
+app.use('/api/prescriptions', prescriptionRoutes);
+app.use('/api/patients', patientRouter);
+app.use('/api/drug-safety', drugSafetyRoutes);
+
+app.use('/api/consultations', consultationRoutes);
+// app.use('/api/agent', medicalAgentRouter);
+
+app.use('/api/medical-agent', medicalAgentRouter);
 
 app.get('/', (req, res) => {
   res.json({ message: 'Med Agents API is running!' });
 });
 
 app.use(errorHandler);
+
 
 module.exports = app;

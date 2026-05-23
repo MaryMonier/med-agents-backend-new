@@ -3,6 +3,9 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { JWT_SECRET } = require('../config/env');
 
+const { chatCompletion } = require('../services/openai.service');
+
+
 const register = async (req, res) => {
   console.log(req.body);
   
@@ -49,4 +52,16 @@ const login = async (req, res) => {
   }
 };
 
-module.exports = { register, login };
+const testAI = async (req, res) => {
+  try {
+    const result = await chatCompletion({
+      systemPrompt: 'You are a medical assistant.',
+      userMessage: req.body.message,
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { register, login, testAI };
