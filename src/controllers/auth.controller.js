@@ -7,6 +7,8 @@ const { chatCompletion } = require('../services/openai.service');
 
 
 const register = async (req, res) => {
+  console.log(req.body);
+  
   try {
     const { name, email, password, specialty, language } = req.body;
 

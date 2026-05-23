@@ -27,7 +27,8 @@ const getPatientById = async (request, response) => {
 const createPatient = async (request, response) => {
     try {
         console.log("Hello From Create patient");
-        const {name,dateOfBirth,gender,bloodType,allergies,chronicConditions,createdBy} = request.body
+        const {name,dateOfBirth,gender,bloodType,allergies,chronicConditions} = request.body
+        const {createdBy} = request.user.id
         if(!name || !dateOfBirth || !gender || !bloodType || !createdBy){
             return response.status(400).json({ success: false, message: "All fields are required" })
         }

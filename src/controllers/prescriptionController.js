@@ -24,7 +24,6 @@ const checkInteractions = async (medications) => {
           const interactionText = result.drug_interactions[0].slice(0, 300);
           foundInteractions.push(`${med.name}: ${interactionText}`);
         }
-
         if (result.warnings?.length > 0) {
           const warningText = result.warnings[0].slice(0, 300);
           foundWarnings.push(`${med.name}: ${warningText}`);
@@ -42,8 +41,6 @@ const checkInteractions = async (medications) => {
 
   return { interactions: foundInteractions, warnings: foundWarnings };
 };
-
-
 const createPrescription = async (req, res, next) => {
   try {
     const { consultationId, patientId, medications, language } = req.body;
