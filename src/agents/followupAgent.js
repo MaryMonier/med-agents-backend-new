@@ -1,4 +1,7 @@
+
 const { chatCompletion } = require('../services/openai.service');
+// const { retrieve, formatContext } = require('../services/rag.service');
+const { retrieve, formatContext } = require('../services/pinecone.service'); // ✅
 const Consultation = require('../models/Consultation');
 const Patient = require('../models/Patient');
 const Prescription = require('../models/Prescription');
@@ -17,15 +20,19 @@ const runFollowupAgent = async ({
       : 'Not specified';
 
   try {
+    // const ragDocs = await retrieve(consultationSummary, language);
+   const ragDocs = await retrieve(consultationSummary, language, 3);
+    const context = formatContext(ragDocs, language);
+
     const result = await chatCompletion({
       systemPrompt: `
 You are a follow-up assistant for licensed doctors.
+Use these medical guidelines: ${context}
+
 STRICT RULES:
 - Respond ONLY in ${language === 'ar' ? 'Arabic' : 'English'}
 - Output ONLY valid JSON
-- Do not provide a final diagnosis
-- Focus only on follow-up instructions, monitoring, red flags, and patient reminders
-- If the case sounds urgent or risky, clearly include red flags
+- Focus only on follow-up instructions, monitoring, red flags
       `,
       userMessage: `
 Patient Summary: ${patientSummary}
@@ -34,7 +41,7 @@ Diagnosis: ${diagnosis || 'Not specified'}
 Current Medications: ${formattedMedications}
 Scheduled Follow-up Date: ${scheduledDate || 'Not specified'}
 
-Return JSON exactly:
+Return JSON:
 {
   "followupInstructions": "...",
   "recommendedFollowupDate": "...",
@@ -92,9 +99,7 @@ const generateFollowupPlan = async (req, res, next) => {
     const prescription = await Prescription.findOne({ consultationId });
 
     const patientSummary = `${patient?.name}, ${patient?.gender}, allergies: ${patient?.allergies?.join(', ') || 'None'}, chronic conditions: ${patient?.chronicConditions?.join(', ') || 'None'}`;
-
     const consultationSummary = `Symptoms: ${consultation.symptoms?.join(', ')}. Clinical note: ${consultation.structuredNote}. Urgency: ${consultation.urgencyLevel}. Suggested specialist: ${consultation.suggestedSpecialist}`;
-
     const medications = prescription?.medications?.map(m => `${m.name} ${m.dose} ${m.frequency}`) || [];
 
     const result = await runFollowupAgent({

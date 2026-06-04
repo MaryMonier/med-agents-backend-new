@@ -6,4 +6,6 @@ module.exports = {
   JWT_SECRET: process.env.JWT_SECRET,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 GROQ_API_KEY: process.env.GROQ_API_KEY,
+
+PINECONE_API_KEY: process.env.PINECONE_API_KEY,
 };
