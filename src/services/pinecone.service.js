@@ -24,13 +24,11 @@ const searchSimilar = async (query, topK = 3) => {
   try {
     const queryEmbedding = await getEmbedding(query);
     const index = pinecone.index(INDEX_NAME);
-
     const results = await index.query({
       vector: queryEmbedding,
       topK,
       includeMetadata: true,
     });
-
     return results.matches || [];
   } catch (error) {
     console.error('Pinecone search error:', error.message);
@@ -38,15 +36,25 @@ const searchSimilar = async (query, topK = 3) => {
   }
 };
 
-module.exports = { getEmbedding, upsertVectors, searchSimilar };
+const retrieve = async (query, language = 'en', topK = 3) => {
+  try {
+    const matches = await searchSimilar(query, topK);
+    return matches.map(match => ({
+      topic: match.metadata?.topic,
+      content: match.metadata?.content,
+      score: match.score,
+    }));
+  } catch (error) {
+    console.error('Retrieve error:', error.message);
+    return [];
+  }
+};
 
+const formatContext = (docs, language = 'en') => {
+  if (!docs || docs.length === 0) {
+    return language === 'ar' ? 'لا توجد معلومات متاحة' : 'No relevant context found';
+  }
+  return docs.map((doc, i) => `[Source ${i + 1}] ${doc.content}`).join('\n\n');
+};
 
-
-
-
-
-
-
-
-
-
+module.exports = { getEmbedding, upsertVectors, searchSimilar, retrieve, formatContext };

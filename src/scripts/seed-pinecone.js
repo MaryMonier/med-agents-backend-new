@@ -32,8 +32,18 @@ const seedPinecone = async () => {
     }
 
     // 2. PubMed - نجيب مقالات حقيقية ونخزنها
-    const pubmedTopics = ['hypertension', 'diabetes', 'asthma', 'pneumonia', 'heart failure'];
-
+const pubmedTopics = [
+  'hypertension',
+  'diabetes', 
+  'asthma',
+  'pneumonia',
+  'heart failure',
+  'chest pain',      // 
+  'kidney disease',  // 
+  'atrial fibrillation', // 
+  'fever',           // 
+  'warfarin',        // 
+];
     for (const topic of pubmedTopics) {
       console.log(`Fetching PubMed for: ${topic}`);
       const articles = await searchPubMed(topic, 2);
