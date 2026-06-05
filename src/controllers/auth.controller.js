@@ -63,5 +63,73 @@ const testAI = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+const getAllDoctors = async (req, res) => {
+  try {
+    const doctors = await User.find().select('-passwordHash');
+    res.json({ success: true, count: doctors.length, data: doctors });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
-module.exports = { register, login, testAI };
+const getDoctorById = async (req, res) => {
+  try {
+    const doctor = await User.findById(req.params.id).select('-passwordHash');
+    if (!doctor) return res.status(404).json({ success: false, message: 'Doctor not found' });
+    res.json({ success: true, data: doctor });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateDoctor = async (req, res) => {
+  try {
+    const { name, email, specialty, language } = req.body;
+    const doctor = await User.findByIdAndUpdate(
+      req.params.id,
+      { name, email, specialty, language },
+      { new: true }
+    ).select('-passwordHash');
+    if (!doctor) return res.status(404).json({ success: false, message: 'Doctor not found' });
+    res.json({ success: true, data: doctor });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteDoctor = async (req, res) => {
+  try {
+    const doctor = await User.findByIdAndDelete(req.params.id);
+    if (!doctor) return res.status(404).json({ success: false, message: 'Doctor not found' });
+    res.json({ success: true, message: 'Doctor deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+const createAdmin = async (req, res) => {
+  try {
+    const { name, email, password, secretKey } = req.body;
+
+    // secret key عشان محدش يعمل admin من غير إذن
+    if (secretKey !== 'MED_AGENTS_ADMIN_2024') {
+      return res.status(403).json({ success: false, message: 'Invalid secret key' });
+    }
+
+    const existing = await User.findOne({ email });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Email already exists' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await User.create({ name, email, passwordHash, role: 'admin' });
+
+    res.status(201).json({ success: true, data: { id: user._id, name: user.name, role: user.role } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { register, login, testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor, createAdmin };
+// module.exports = { register, login, testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor };
+
+// module.exports = { register, login, testAI };
