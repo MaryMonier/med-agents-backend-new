@@ -2,9 +2,9 @@
 const Patient = require("../models/Patient");
 
 const getAllPatients = async (request, response) => {
-    try {
+    try {const createdBy = request.user.id
         console.log("Hello Final Project");
-         const allPatients = await Patient.find()
+         const allPatients = await Patient.find({createdBy})
          return response.status(200).json({ success: true, data: allPatients })
     } catch (error) {
          return response.status(500).json({ success: false, message: error.message })
@@ -26,6 +26,7 @@ const getPatientById = async (request, response) => {
 }
 const createPatient = async (request, response) => {
     try {
+        
         console.log("Hello From Create patient");
         const {name,dateOfBirth,gender,bloodType,allergies,chronicConditions} = request.body
         const createdBy = request.user.id
