@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { JWT_SECRET } = require('../config/env');
-
+const BlacklistedToken = require('../models/BlacklistedToken');
 const { chatCompletion } = require('../services/openai.service');
 
 
@@ -129,7 +129,34 @@ const createAdmin = async (req, res) => {
   }
 };
 
-module.exports = { register, login, testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor, createAdmin };
+
+
+
+
+const logout = async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'No token ' });
+    }
+
+    await BlacklistedToken.create({ token });
+
+    return res.status(200).json({ success: true, message: 'Logged out successfully' });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+
+module.exports = { register, login, logout,testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor, createAdmin };
 // module.exports = { register, login, testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor };
 
 // module.exports = { register, login, testAI };
+
+
+
+
