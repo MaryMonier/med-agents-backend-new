@@ -1,4 +1,5 @@
-const express = require('express');
+const express = require("express");
+const authMiddleware = require("../middleware/auth.middleware");
 
 const {
   createFollowup,
@@ -6,15 +7,16 @@ const {
   getFollowupById,
   updateFollowup,
   deleteFollowup,
-} = require('../controllers/followupController');
+} = require("../controllers/followupController");
 
 const router = express.Router();
 
-router.route('/')
-  .post(createFollowup)
-  .get(getFollowups);
+router.use(authMiddleware);
 
-router.route('/:id')
+router.route("/").post(createFollowup).get(getFollowups);
+
+router
+  .route("/:id")
   .get(getFollowupById)
   .put(updateFollowup)
   .delete(deleteFollowup);
