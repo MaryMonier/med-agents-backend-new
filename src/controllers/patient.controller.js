@@ -1,15 +1,43 @@
 
 const Patient = require("../models/Patient");
 
-const getAllPatients = async (request, response) => {
+const getAllPatientsByDoctor = async (request, response) => {
     try {const createdBy = request.user.id
-        console.log("Hello Final Project");
-         const allPatients = await Patient.find({createdBy})
+        const {search} = request.query
+        let allPatients
+        if (search) {
+             allPatients = await Patient.find({createdBy,$or:[{name:search},{nationalID:search}]})
+            
+        }
+        else{
+             allPatients = await Patient.find({createdBy})
+
+        }
          return response.status(200).json({ success: true, data: allPatients })
     } catch (error) {
          return response.status(500).json({ success: false, message: error.message })
     }
 }
+
+const getAllPatients = async (request, response) => {
+    try {
+        const {search} = request.query
+        let allPatients
+        if (search) {
+             allPatients = await Patient.find({$or:[{name:search},{nationalID:search}]})
+            
+        }
+        else{
+             allPatients = await Patient.find({})
+
+        }
+         return response.status(200).json({ success: true, data: allPatients })
+    } catch (error) {
+         return response.status(500).json({ success: false, message: error.message })
+    }
+}
+
+
 const getPatientById = async (request, response) => {
     try {
         console.log("Hello Get patient by id");
@@ -28,12 +56,15 @@ const createPatient = async (request, response) => {
     try {
         
         console.log("Hello From Create patient");
-        const {name,dateOfBirth,gender,bloodType,allergies,chronicConditions} = request.body
+        const {name,dateOfBirth,gender,bloodType,allergies,chronicConditions,nationalID} = request.body
         const createdBy = request.user.id
-        if(!name || !dateOfBirth || !gender || !bloodType || !createdBy){
+        if(!name || !dateOfBirth || !gender || !bloodType || !createdBy || !nationalID ){
             return response.status(400).json({ success: false, message: "All fields are required" })
         }
-        const patient = await Patient.create({name,dateOfBirth,gender,bloodType,allergies,chronicConditions,createdBy})
+        if(nationalID.length > 14 || nationalID.length < 14){
+            return response.status(400).json({ success: false, message: "National ID Must be 14 number" })
+        }
+        const patient = await Patient.create({name,dateOfBirth,gender,bloodType,allergies,chronicConditions,createdBy,nationalID})
         return response.status(201).json({ success: true, data: patient })
     } catch (error) {
         return response.status(500).json({ success: false, message: error.message })
@@ -74,4 +105,5 @@ module.exports = {
     createPatient,
     deletePatient,
     updatePatient,
+    getAllPatientsByDoctor
 }
