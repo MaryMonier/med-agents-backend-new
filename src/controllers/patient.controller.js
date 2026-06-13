@@ -19,17 +19,26 @@ const getAllPatientsByDoctor = async (request, response) => {
          return response.status(500).json({ success: false, message: error.message })
     }
 }
+
 const getAllPatients = async (request, response) => {
-  try {
-    const createdBy = request.user.id;
-    const allPatients = await Patient.find({ createdBy });
-    return response.status(200).json({ success: true, data: allPatients });
-  } catch (error) {
-    return response
-      .status(500)
-      .json({ success: false, message: error.message });
-  }
-};
+    try {const createdBy = request.user.id
+        const {search} = request.query
+        let allPatients
+        if (search) {
+             allPatients = await Patient.find({$or:[{name:search},{nationalID:search}]})
+            
+        }
+        else{
+             allPatients = await Patient.find()
+
+        }
+         return response.status(200).json({ success: true, data: allPatients })
+    } catch (error) {
+         return response.status(500).json({ success: false, message: error.message })
+    }
+}
+
+
 const getPatientById = async (request, response) => {
   try {
     const id = request.params.id;
