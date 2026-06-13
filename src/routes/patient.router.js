@@ -1,3 +1,4 @@
+const authMiddleware = require("../middleware/auth.middleware");
 const { getAllPatients, 
     getPatientById,
      createPatient,
@@ -8,7 +9,6 @@ const { getAllPatients,
 const adminMiddleware = require("../middleware/admin.middleware")
 
 const router = require("express").Router();
-const authMiddleware = require("../middleware/auth.middleware");
 
 router.get("/",authMiddleware,adminMiddleware,getAllPatients)
 router.get("/doctor",authMiddleware,getAllPatientsByDoctor)
