@@ -2,21 +2,94 @@ const Patient = require("../models/Patient");
 const Consultation = require("../models/Consultation");
 const Prescription = require("../models/Prescription");
 
-const getAllPatients = async (request, response) => {
+const getAllPatientsByDoctor = async (request, response) => {
   try {
     const createdBy = request.user.id;
-    console.log("Hello Final Project");
-    const allPatients = await Patient.find({ createdBy });
-    return response.status(200).json({ success: true, data: allPatients });
+    const { search, page = 1, limit = 10 } = request.query;
+
+    const skip = (page - 1) * limit;
+
+    if (search) {
+      const allPatients = await Patient.find({
+        createdBy,
+        $or: [
+          { name: { $regex: search, $options: 'i' } },
+          { nationalID: { $regex: search, $options: 'i' } }
+        ]
+      });
+
+      return response.status(200).json({
+        success: true,
+        data: allPatients,
+        pagination: null
+      });
+    }
+    const totalPatients = await Patient.countDocuments({ createdBy });
+    const allPatients = await Patient.find({ createdBy })
+      .skip(skip)
+      .limit(Number(limit));
+
+    return response.status(200).json({
+      success: true,
+      data: allPatients,
+      pagination: {
+        total: totalPatients,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(totalPatients / limit)
+      }
+    });
+
   } catch (error) {
-    return response
-      .status(500)
-      .json({ success: false, message: error.message });
+    return response.status(500).json({ success: false, message: error.message });
   }
 };
+
+
+const getAllPatients = async (request, response) => {
+  try {
+    const { search, page = 1, limit = 10 } = request.query;
+
+    const skip = (page - 1) * limit;
+    if (search) {
+      const allPatients = await Patient.find({
+        $or: [
+          { name: { $regex: search, $options: 'i' } },
+          { nationalID: { $regex: search, $options: 'i' } }
+        ]
+      });
+
+      return response.status(200).json({
+        success: true,
+        data: allPatients,
+        pagination: null
+      });
+    }
+
+    const totalPatients = await Patient.countDocuments({});
+    const allPatients = await Patient.find({})
+      .skip(skip)
+      .limit(Number(limit));
+
+    return response.status(200).json({
+      success: true,
+      data: allPatients,
+      pagination: {
+        total: totalPatients,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(totalPatients / limit)
+      }
+    });
+
+  } catch (error) {
+    return response.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
 const getPatientById = async (request, response) => {
   try {
-    console.log("Hello Get patient by id");
     const id = request.params.id;
     const patient = await Patient.findById(id);
     if (!patient) {
@@ -31,39 +104,29 @@ const getPatientById = async (request, response) => {
       .json({ success: false, message: error.message });
   }
 };
+
+
 const createPatient = async (request, response) => {
   try {
-    console.log("Hello From Create patient");
-    const {
-      name,
-      dateOfBirth,
-      gender,
-      bloodType,
-      allergies,
-      chronicConditions,
-    } = request.body;
+    const { name, dateOfBirth, gender, bloodType, allergies, chronicConditions, nationalID } = request.body;
     const createdBy = request.user.id;
-    if (!name || !dateOfBirth || !gender || !bloodType || !createdBy) {
-      return response
-        .status(400)
-        .json({ success: false, message: "All fields are required" });
+
+    if (!name || !dateOfBirth || !gender || !bloodType || !nationalID) {
+      return response.status(400).json({ success: false, message: "All fields are required" });
     }
-    const patient = await Patient.create({
-      name,
-      dateOfBirth,
-      gender,
-      bloodType,
-      allergies,
-      chronicConditions,
-      createdBy,
-    });
+
+    if (nationalID.length !== 14) {
+      return response.status(400).json({ success: false, message: "National ID Must be 14 numbers" });
+    }
+
+    const patient = await Patient.create({ name, dateOfBirth, gender, bloodType, allergies, chronicConditions, createdBy, nationalID });
     return response.status(201).json({ success: true, data: patient });
+
   } catch (error) {
-    return response
-      .status(500)
-      .json({ success: false, message: error.message });
+    return response.status(500).json({ success: false, message: error.message });
   }
 };
+
 const deletePatient = async (request, response) => {
   try {
     console.log("Hello delete patient");
@@ -140,10 +203,10 @@ const getPatientHistory = async (req, res) => {
           structuredNote: consultation.structuredNote || null,
           prescription: prescription
             ? {
-                medications: prescription.medications,
-                interactions: prescription.interactions,
-                warnings: prescription.warnings,
-              }
+              medications: prescription.medications,
+              interactions: prescription.interactions,
+              warnings: prescription.warnings,
+            }
             : null,
         };
       }),
@@ -164,5 +227,8 @@ module.exports = {
   createPatient,
   deletePatient,
   updatePatient,
+  getAllPatientsByDoctor,
   getPatientHistory,
-};
+}
+
+
