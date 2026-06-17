@@ -87,7 +87,7 @@ const createConsultation = async (req, res) => {
       await Followup.create({
         consultationId: consultation._id,
         patientId,
-        instructions: agentResult.structuredNote || "Follow-up visit",
+        instructions: "-",
         scheduledDate: followUpDate,
         language: language || "en",
       });
