@@ -2,61 +2,55 @@ const Consultation = require("../models/Consultation");
 const Followup = require("../models/Followup");
 const { runClinicalRecAgent } = require("../agents/clinicalRecAgent");
 
-// ─── Helper: جيب بداية اليوم بتوقيت مصر (Africa/Cairo) ─────────────────────
 const getStartOfTodayInEgypt = () => {
   const now = new Date();
-
-  // بنجيب التاريخ بتوقيت مصر كـ string زي "2026-06-15"
   const egyptDateStr = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Cairo",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).format(now);
-
-  // نحوله لـ Date بداية اليوم UTC، عشان نقارن بالتواريخ الجاية من الفرونت بشكل ثابت
   return new Date(`${egyptDateStr}T00:00:00.000Z`);
 };
 
 const createConsultation = async (req, res) => {
   try {
-    const { patientId, symptoms, diagnosis, rawInput, language, followUpDate } =
-      req.body;
+    const {
+      patientId,
+      symptoms,
+      diagnosis,
+      rawInput,
+      language,
+      followUpDate,
+      followupId,
+    } = req.body;
 
-    // ─── Validate followUpDate ──────────────────────────────────────────────
     if (followUpDate) {
       const followUp = new Date(followUpDate);
-
       if (isNaN(followUp.getTime())) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid followUpDate",
-        });
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid followUpDate" });
       }
-
-      // بداية اليوم الحالي بتوقيت مصر
       const today = getStartOfTodayInEgypt();
-
-      // بداية يوم بكرة - أي تاريخ يوم 15 بطوله (من 00:00 لـ 23:59) لازم يترفض
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      // لازم يكون من بداية بكرة وبعدها
-      if (followUp < tomorrow) {
+      const followUpDateOnly = new Date(
+        followUp.toISOString().split("T")[0] + "T00:00:00.000Z",
+      );
+      const todayDateOnly = new Date(
+        today.toISOString().split("T")[0] + "T00:00:00.000Z",
+      );
+      if (followUpDateOnly <= todayDateOnly) {
         return res.status(400).json({
           success: false,
-          message: "followUp Date must be after today",
+          message: "followUpDate must be after today",
         });
       }
-
-      // أقصى حد 6 شهور من بكرة (بتوقيت مصر)
-      const maxDate = new Date(tomorrow);
+      const maxDate = new Date(todayDateOnly);
       maxDate.setMonth(maxDate.getMonth() + 6);
-
-      if (followUp > maxDate) {
+      if (followUpDateOnly > maxDate) {
         return res.status(400).json({
           success: false,
-          message: "followUp Date cannot be more than 6 months from today",
+          message: "followUpDate cannot be more than 6 months from today",
         });
       }
     }
@@ -80,9 +74,21 @@ const createConsultation = async (req, res) => {
       language: language || "en",
       status: "completed",
       followUpDate: followUpDate || undefined,
+      followupId: followupId || null,
     });
 
-    // لو الدكتور حدد تاريخ فولو أب، اعمل Followup تلقائي مربوط بالـ consultation دي
+    // لو الكونسلتيشن دي من فولو أب → غير status الفولو أب لـ confirmed
+    // وحدّث الـ instructions بالـ structuredNote الجديدة
+    if (followupId) {
+      await Followup.findByIdAndUpdate(followupId, {
+        $set: {
+          status: "confirmed",
+          instructions: agentResult.structuredNote || rawInput,
+        },
+      });
+    }
+
+    // لو الدكتور حدد تاريخ فولو أب جديد، اعمل Followup تلقائي
     if (followUpDate) {
       await Followup.create({
         consultationId: consultation._id,
@@ -105,7 +111,10 @@ const createConsultation = async (req, res) => {
 
 const getAllConsultations = async (req, res) => {
   try {
-    const consultations = await Consultation.find({ doctorId: req.user.id })
+    const consultations = await Consultation.find({
+      doctorId: req.user.id,
+      followupId: null,
+    })
       .populate("patientId", "name age")
       .sort({ createdAt: -1 });
 
@@ -125,14 +134,11 @@ const getConsultationById = async (req, res) => {
       "patientId",
       "name age",
     );
-
     if (!consultation) {
-      return res.status(404).json({
-        success: false,
-        message: "Consultation not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Consultation not found" });
     }
-
     res.status(200).json({ success: true, data: consultation });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -146,34 +152,35 @@ const updateConsultation = async (req, res) => {
       req.body,
       { new: true, runValidators: true },
     );
-
     if (!consultation) {
-      return res.status(404).json({
-        success: false,
-        message: "Consultation not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Consultation not found" });
     }
-
     res.status(200).json({ success: true, data: consultation });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// ─── مشكلة ٢: لما تتمسح كونسلتيشن، الفولو أب المبنية عليها تتمسح كمان ────
 const deleteConsultation = async (req, res) => {
   try {
-    const consultation = await Consultation.findByIdAndDelete(req.params.id);
-
+    const consultation = await Consultation.findById(req.params.id);
     if (!consultation) {
-      return res.status(404).json({
-        success: false,
-        message: "Consultation not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Consultation not found" });
     }
+
+    // امسح الفولو أبات المرتبطة بالكونسلتيشن دي
+    await Followup.deleteMany({ consultationId: consultation._id });
+
+    await consultation.deleteOne();
 
     res.status(200).json({
       success: true,
-      message: "Consultation deleted successfully",
+      message: "Consultation and related follow-ups deleted successfully",
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
