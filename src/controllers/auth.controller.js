@@ -150,9 +150,41 @@ const logout = async (req, res) => {
   }
 };
 
+const updateMyProfile = async (req, res) => {
+  try {
+    const { confirmEmail, name, specialty, language, newPassword } = req.body;
 
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
 
-module.exports = { register, login, logout,testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor, createAdmin };
+    if (confirmEmail !== currentUser.email) {
+      return res.status(403).json({ success: false, message: 'Email confirmation does not match your account email' });
+    }
+
+    const updates = {};
+    if (name) updates.name = name;
+    if (specialty) updates.specialty = specialty;
+    if (language) updates.language = language;
+
+    if (newPassword) {
+      updates.passwordHash = await bcrypt.hash(newPassword, 10);
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user.id,
+      updates,
+      { new: true }
+    ).select('-passwordHash');
+
+    res.json({ success: true, data: updatedUser });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { register, login, logout,testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor, createAdmin,updateMyProfile };
 // module.exports = { register, login, testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor };
 
 // module.exports = { register, login, testAI };
