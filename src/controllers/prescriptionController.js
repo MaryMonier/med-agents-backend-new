@@ -1,7 +1,8 @@
-const Prescription = require('../models/Prescription');
-const Consultation = require('../models/Consultation');
-const Patient = require('../models/Patient');
+const Prescription = require("../models/Prescription");
+const Consultation = require("../models/Consultation");
+const Patient = require("../models/Patient");
 
+// ─── Helper: OpenFDA Drug Interaction Checker ────────────────────────────────
 const checkInteractions = async (medications) => {
   const foundInteractions = [];
   const foundWarnings = [];
@@ -13,7 +14,6 @@ const checkInteractions = async (medications) => {
         const url = `https://api.fda.gov/drug/label.json?search=drug_interactions:"${drugName}"&limit=1`;
 
         const response = await fetch(url);
-
         if (!response.ok) return;
 
         const data = await response.json();
@@ -28,7 +28,6 @@ const checkInteractions = async (medications) => {
           const warningText = result.warnings[0].slice(0, 300);
           foundWarnings.push(`${med.name}: ${warningText}`);
         }
-
         if (result.boxed_warning?.length > 0) {
           const boxedText = result.boxed_warning[0].slice(0, 300);
           foundWarnings.push(`[BOXED WARNING] ${med.name}: ${boxedText}`);
@@ -36,31 +35,83 @@ const checkInteractions = async (medications) => {
       } catch (err) {
         console.error(`OpenFDA error for ${med.name}:`, err.message);
       }
-    })
+    }),
   );
 
   return { interactions: foundInteractions, warnings: foundWarnings };
 };
+
+// ─── Search Drugs from FDA ────────────────────────────────────────────────────
+// GET /api/prescriptions/drugs/search?name=aspirin
+const searchDrugs = async (req, res, next) => {
+  try {
+    const { name } = req.query;
+
+    if (!name || name.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "Drug name is required",
+      });
+    }
+
+    const drugName = encodeURIComponent(name.trim());
+    const url = `https://api.fda.gov/drug/label.json?search=openfda.brand_name:"${drugName}"+openfda.generic_name:"${drugName}"&limit=10`;
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        data: [],
+      });
+    }
+
+    const data = await response.json();
+    const results = data.results || [];
+
+    // بنرجع بيانات مبسطة مش الـ response كامل
+    const drugs = results.map((drug) => ({
+      brandName: drug.openfda?.brand_name?.[0] || "N/A",
+      genericName: drug.openfda?.generic_name?.[0] || "N/A",
+      manufacturer: drug.openfda?.manufacturer_name?.[0] || "N/A",
+      dosageForms: drug.openfda?.dosage_form || [],
+      route: drug.openfda?.route?.[0] || "N/A",
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: drugs.length,
+      data: drugs,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ─── Create Prescription ──────────────────────────────────────────────────────
 const createPrescription = async (req, res, next) => {
   try {
     const { consultationId, patientId, medications, language } = req.body;
 
     const consultation = await Consultation.findById(consultationId);
     if (!consultation) {
-      const err = new Error('Consultation not found');
+      const err = new Error("Consultation not found");
       err.status = 404;
       return next(err);
     }
 
     if (consultation.doctorId.toString() !== req.user.id.toString()) {
-      const err = new Error('Not authorized to prescribe for this consultation');
+      const err = new Error(
+        "Not authorized to prescribe for this consultation",
+      );
       err.status = 403;
       return next(err);
     }
 
     const patient = await Patient.findById(patientId);
     if (!patient) {
-      const err = new Error('Patient not found');
+      const err = new Error("Patient not found");
       err.status = 404;
       return next(err);
     }
@@ -73,7 +124,7 @@ const createPrescription = async (req, res, next) => {
         patient.allergies.forEach((allergy) => {
           if (med.name.toLowerCase().includes(allergy.toLowerCase())) {
             allergyWarnings.push(
-              `Patient is allergic to ${allergy} — check ${med.name}`
+              `Patient is allergic to ${allergy} — check ${med.name}`,
             );
           }
         });
@@ -91,25 +142,40 @@ const createPrescription = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      message: 'Prescription created successfully',
+      message: "Prescription created successfully",
       data: prescription,
     });
   } catch (err) {
     next(err);
   }
 };
+const getAllPrescriptions = async (req, res, next) => {
+  try {
+    const prescriptions = await Prescription.find()
+      .populate("patientId", "name")
+      .populate("consultationId", "followupId")
+      .sort({ createdAt: -1 });
 
-
+    res.status(200).json({
+      success: true,
+      count: prescriptions.length,
+      data: prescriptions,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+// ─── Get Prescription by Consultation ────────────────────────────────────────
 const getPrescriptionByConsultation = async (req, res, next) => {
   try {
     const prescription = await Prescription.findOne({
       consultationId: req.params.consultationId,
     })
-      .populate('patientId', 'name dateOfBirth gender bloodType allergies')
-      .populate('consultationId', 'symptoms diagnosis urgencyLevel');
+      .populate("patientId", "name dateOfBirth gender bloodType allergies")
+      .populate("consultationId", "symptoms diagnosis urgencyLevel");
 
     if (!prescription) {
-      const err = new Error('Prescription not found for this consultation');
+      const err = new Error("Prescription not found for this consultation");
       err.status = 404;
       return next(err);
     }
@@ -120,13 +186,13 @@ const getPrescriptionByConsultation = async (req, res, next) => {
   }
 };
 
-
+// ─── Get All Prescriptions for a Patient ─────────────────────────────────────
 const getPrescriptionsByPatient = async (req, res, next) => {
   try {
     const prescriptions = await Prescription.find({
       patientId: req.params.patientId,
     })
-      .populate('consultationId', 'symptoms diagnosis createdAt')
+      .populate("consultationId", "symptoms diagnosis createdAt")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -139,15 +205,21 @@ const getPrescriptionsByPatient = async (req, res, next) => {
   }
 };
 
-
+// ─── Get Single Prescription by ID ───────────────────────────────────────────
 const getPrescriptionById = async (req, res, next) => {
   try {
     const prescription = await Prescription.findById(req.params.id)
-      .populate('patientId', 'name dateOfBirth gender bloodType allergies chronicConditions')
-      .populate('consultationId', 'symptoms diagnosis urgencyLevel suggestedSpecialist');
+      .populate(
+        "patientId",
+        "name dateOfBirth gender bloodType allergies chronicConditions",
+      )
+      .populate(
+        "consultationId",
+        "symptoms diagnosis urgencyLevel suggestedSpecialist",
+      );
 
     if (!prescription) {
-      const err = new Error('Prescription not found');
+      const err = new Error("Prescription not found");
       err.status = 404;
       return next(err);
     }
@@ -158,25 +230,24 @@ const getPrescriptionById = async (req, res, next) => {
   }
 };
 
-
+// ─── Update Prescription ──────────────────────────────────────────────────────
 const updatePrescription = async (req, res, next) => {
   try {
     const prescription = await Prescription.findById(req.params.id).populate(
-      'consultationId',
-      'doctorId'
+      "consultationId",
+      "doctorId",
     );
 
     if (!prescription) {
-      const err = new Error('Prescription not found');
+      const err = new Error("Prescription not found");
       err.status = 404;
       return next(err);
     }
 
     if (
-      prescription.consultationId.doctorId.toString() !==
-      req.user.id.toString()
+      prescription.consultationId.doctorId.toString() !== req.user.id.toString()
     ) {
-      const err = new Error('Not authorized to update this prescription');
+      const err = new Error("Not authorized to update this prescription");
       err.status = 403;
       return next(err);
     }
@@ -196,7 +267,9 @@ const updatePrescription = async (req, res, next) => {
         medications.forEach((med) => {
           patient.allergies.forEach((allergy) => {
             if (med.name.toLowerCase().includes(allergy.toLowerCase())) {
-              warnings.push(`Patient is allergic to ${allergy} — check ${med.name}`);
+              warnings.push(
+                `Patient is allergic to ${allergy} — check ${med.name}`,
+              );
             }
           });
         });
@@ -211,12 +284,12 @@ const updatePrescription = async (req, res, next) => {
         interactions,
         warnings,
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     res.status(200).json({
       success: true,
-      message: 'Prescription updated successfully',
+      message: "Prescription updated successfully",
       data: updated,
     });
   } catch (err) {
@@ -224,27 +297,36 @@ const updatePrescription = async (req, res, next) => {
   }
 };
 
-
+// ─── Delete Prescription ──────────────────────────────────────────────────────
 const deletePrescription = async (req, res, next) => {
   try {
     const prescription = await Prescription.findById(req.params.id).populate(
-      'consultationId',
-      'doctorId'
+      "consultationId",
+      "doctorId",
     );
 
     if (!prescription) {
-      const err = new Error('Prescription not found');
+      const err = new Error("Prescription not found");
       err.status = 404;
       return next(err);
     }
 
-    const isDoctor =
-      prescription.consultationId.doctorId.toString() ===
-      req.user.id.toString();
-    const isAdmin = req.user.role === 'admin';
+    // لو الكونسلتيشن اتمسحت، نسمح للـ admin بس يحذف
+    // أو لو الكونسلتيشن موجودة نشيك على الدكتور عادي
+    const isAdmin = req.user.role === "admin";
+    const consultationExists = !!prescription.consultationId;
 
-    if (!isDoctor && !isAdmin) {
-      const err = new Error('Not authorized to delete this prescription');
+    if (consultationExists) {
+      const isDoctor =
+        prescription.consultationId.doctorId?.toString() ===
+        req.user.id.toString();
+      if (!isDoctor && !isAdmin) {
+        const err = new Error("Not authorized to delete this prescription");
+        err.status = 403;
+        return next(err);
+      }
+    } else if (!isAdmin) {
+      const err = new Error("Not authorized to delete this prescription");
       err.status = 403;
       return next(err);
     }
@@ -253,19 +335,20 @@ const deletePrescription = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'Prescription deleted successfully',
+      message: "Prescription deleted successfully",
     });
   } catch (err) {
     next(err);
   }
 };
 
-
 module.exports = {
+  searchDrugs,
   createPrescription,
   getPrescriptionByConsultation,
   getPrescriptionsByPatient,
   getPrescriptionById,
   updatePrescription,
   deletePrescription,
+  getAllPrescriptions,
 };

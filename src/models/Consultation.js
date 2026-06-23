@@ -29,6 +29,12 @@ const consultationSchema = new mongoose.Schema(
     },
     language: { type: String, enum: ["en", "ar"], default: "en" },
     followUpDate: { type: Date },
+    // لو الكونسلتيشن دي جاية من فولو أب، بنحفظ الـ id بتاعه هنا
+    followupId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Followup",
+      default: null,
+    },
   },
   { timestamps: true },
 );

@@ -17,7 +17,7 @@ const followupSchema = new mongoose.Schema(
     reminderSent: { type: Boolean, default: false },
     status: {
       type: String,
-      enum: ["pending", "done", "cancelled"],
+      enum: ["pending", "confirmed", "cancelled"],
       default: "pending",
     },
     language: { type: String, enum: ["en", "ar"], default: "en" },

@@ -13,15 +13,15 @@ const getAllPatientsByDoctor = async (request, response) => {
       const allPatients = await Patient.find({
         createdBy,
         $or: [
-          { name: { $regex: search, $options: 'i' } },
-          { nationalID: { $regex: search, $options: 'i' } }
-        ]
+          { name: { $regex: search, $options: "i" } },
+          { nationalID: { $regex: search, $options: "i" } },
+        ],
       });
 
       return response.status(200).json({
         success: true,
         data: allPatients,
-        pagination: null
+        pagination: null,
       });
     }
     const totalPatients = await Patient.countDocuments({ createdBy });
@@ -36,15 +36,15 @@ const getAllPatientsByDoctor = async (request, response) => {
         total: totalPatients,
         page: Number(page),
         limit: Number(limit),
-        totalPages: Math.ceil(totalPatients / limit)
-      }
+        totalPages: Math.ceil(totalPatients / limit),
+      },
     });
-
   } catch (error) {
-    return response.status(500).json({ success: false, message: error.message });
+    return response
+      .status(500)
+      .json({ success: false, message: error.message });
   }
 };
-
 
 const getAllPatients = async (request, response) => {
   try {
@@ -54,22 +54,20 @@ const getAllPatients = async (request, response) => {
     if (search) {
       const allPatients = await Patient.find({
         $or: [
-          { name: { $regex: search, $options: 'i' } },
-          { nationalID: { $regex: search, $options: 'i' } }
-        ]
+          { name: { $regex: search, $options: "i" } },
+          { nationalID: { $regex: search, $options: "i" } },
+        ],
       });
 
       return response.status(200).json({
         success: true,
         data: allPatients,
-        pagination: null
+        pagination: null,
       });
     }
 
     const totalPatients = await Patient.countDocuments({});
-    const allPatients = await Patient.find({})
-      .skip(skip)
-      .limit(Number(limit));
+    const allPatients = await Patient.find({}).skip(skip).limit(Number(limit));
 
     return response.status(200).json({
       success: true,
@@ -78,15 +76,15 @@ const getAllPatients = async (request, response) => {
         total: totalPatients,
         page: Number(page),
         limit: Number(limit),
-        totalPages: Math.ceil(totalPatients / limit)
-      }
+        totalPages: Math.ceil(totalPatients / limit),
+      },
     });
-
   } catch (error) {
-    return response.status(500).json({ success: false, message: error.message });
+    return response
+      .status(500)
+      .json({ success: false, message: error.message });
   }
 };
-
 
 const getPatientById = async (request, response) => {
   try {
@@ -105,25 +103,46 @@ const getPatientById = async (request, response) => {
   }
 };
 
-
 const createPatient = async (request, response) => {
   try {
-    const { name, dateOfBirth, gender, bloodType, allergies, chronicConditions, nationalID } = request.body;
+    const {
+      name,
+      dateOfBirth,
+      gender,
+      bloodType,
+      allergies,
+      chronicConditions,
+      nationalID,
+    } = request.body;
     const createdBy = request.user.id;
 
     if (!name || !dateOfBirth || !gender || !bloodType || !nationalID) {
-      return response.status(400).json({ success: false, message: "All fields are required" });
+      return response
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
     }
 
     if (nationalID.length !== 14) {
-      return response.status(400).json({ success: false, message: "National ID Must be 14 numbers" });
+      return response
+        .status(400)
+        .json({ success: false, message: "National ID Must be 14 numbers" });
     }
 
-    const patient = await Patient.create({ name, dateOfBirth, gender, bloodType, allergies, chronicConditions, createdBy, nationalID });
+    const patient = await Patient.create({
+      name,
+      dateOfBirth,
+      gender,
+      bloodType,
+      allergies,
+      chronicConditions,
+      createdBy,
+      nationalID,
+    });
     return response.status(201).json({ success: true, data: patient });
-
   } catch (error) {
-    return response.status(500).json({ success: false, message: error.message });
+    return response
+      .status(500)
+      .json({ success: false, message: error.message });
   }
 };
 
@@ -166,7 +185,6 @@ const updatePatient = async (request, response) => {
       .json({ success: false, message: error.message });
   }
 };
-
 const getPatientHistory = async (req, res) => {
   try {
     const patientId = req.params.id;
@@ -183,7 +201,7 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote createdAt",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId createdAt",
       )
       .sort({ createdAt: -1 });
 
@@ -201,12 +219,13 @@ const getPatientHistory = async (req, res) => {
           urgencyLevel: consultation.urgencyLevel,
           suggestedSpecialist: consultation.suggestedSpecialist || null,
           structuredNote: consultation.structuredNote || null,
+          isFollowup: !!consultation.followupId, // لو كانت من فولو أب
           prescription: prescription
             ? {
-              medications: prescription.medications,
-              interactions: prescription.interactions,
-              warnings: prescription.warnings,
-            }
+                medications: prescription.medications,
+                interactions: prescription.interactions,
+                warnings: prescription.warnings,
+              }
             : null,
         };
       }),
@@ -229,6 +248,4 @@ module.exports = {
   updatePatient,
   getAllPatientsByDoctor,
   getPatientHistory,
-}
-
-
+};

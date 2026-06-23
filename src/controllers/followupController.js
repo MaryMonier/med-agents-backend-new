@@ -65,14 +65,20 @@ const getFollowups = async (req, res) => {
       .populate("patientId", "name")
       .populate({
         path: "consultationId",
+        select: "doctorId structuredNote",
         populate: { path: "doctorId", select: "name" },
       })
       .sort({ createdAt: -1 });
 
+    const data = followups.map((f) => ({
+      ...f.toObject(),
+      lastConsultationNote: f.consultationId?.structuredNote || null,
+    }));
+
     res.status(200).json({
       success: true,
-      count: followups.length,
-      data: followups,
+      count: data.length,
+      data,
     });
   } catch (error) {
     res.status(500).json({
