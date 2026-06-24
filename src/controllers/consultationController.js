@@ -112,7 +112,6 @@ const createConsultation = async (req, res) => {
 const getAllConsultations = async (req, res) => {
   try {
     const consultations = await Consultation.find({
-      doctorId: req.user.id,
       followupId: null,
     })
       .populate("patientId", "name age")
