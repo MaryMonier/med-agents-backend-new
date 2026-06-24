@@ -162,7 +162,7 @@ const updateConsultation = async (req, res) => {
   }
 };
 
-// ─── مشكلة ٢: لما تتمسح كونسلتيشن، الفولو أب المبنية عليها تتمسح كمان ────
+
 const deleteConsultation = async (req, res) => {
   try {
     const consultation = await Consultation.findById(req.params.id);
@@ -172,7 +172,7 @@ const deleteConsultation = async (req, res) => {
         .json({ success: false, message: "Consultation not found" });
     }
 
-    // امسح الفولو أبات المرتبطة بالكونسلتيشن دي
+    
     await Followup.deleteMany({ consultationId: consultation._id });
 
     await consultation.deleteOne();
