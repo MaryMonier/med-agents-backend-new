@@ -1,10 +1,5 @@
-
-
-
-
 const { chatCompletion } = require('../services/openai.service');
-// const { retrieve, formatContext } = require('../services/rag.service');
-const { retrieve, formatContext } = require('../services/pinecone.service'); // ✅
+const { retrieve, formatContext } = require('../services/pinecone.service');
 
 const runClinicalRecAgent = async ({
   rawInput = "",
@@ -12,27 +7,31 @@ const runClinicalRecAgent = async ({
   diagnosis = "",
   language = "en",
 }) => {
-  const formattedSymptoms =
-    Array.isArray(symptoms) && symptoms.length
-      ? symptoms.join(", ")
-      : "Not specified";
+  const formattedSymptoms = Array.isArray(symptoms) && symptoms.length
+    ? symptoms.join(", ")
+    : "Not specified";
 
   try {
-    // جيب الـ RAG context
-    // const ragDocs = await retrieve(formattedSymptoms, language);
     const ragDocs = await retrieve(formattedSymptoms, language, 3);
     const context = formatContext(ragDocs, language);
 
     const systemPrompt = `
-You are a clinical recommendation assistant for doctors.
-Use the following medical guidelines to inform your response:
+You are a clinical recommendation assistant for licensed doctors.
+Use the following medical guidelines:
 ${context}
 
 STRICT RULES:
 - Respond ONLY in ${language === "ar" ? "Arabic" : "English"}
-- Output ONLY valid JSON
-- Never provide final diagnosis
-- If uncertain, urgencyLevel must be "critical"
+- Output ONLY valid JSON, no extra text
+
+
+URGENCY LEVEL DEFINITIONS:
+- "low": mild medical symptoms (cold, mild headache, minor fatigue, skin rash)
+- "medium": symptoms needing attention (high fever, severe cough, persistent pain)
+- "critical": life-threatening symptoms (chest pain, stroke, difficulty breathing)
+- "unknown": input has NO medical content whatsoever (e.g. "hello", "test 123", random text)
+
+IMPORTANT: If rawInput and symptoms contain NO medical terms at all, you MUST return "unknown".
     `;
 
     const userMessage = `
@@ -40,11 +39,11 @@ Doctor Input: ${rawInput}
 Symptoms: ${formattedSymptoms}
 Diagnosis: ${diagnosis || "Not yet determined"}
 
-Return JSON:
+Return JSON only:
 {
   "structuredNote": "...",
   "suggestedSpecialist": "...",
-  "urgencyLevel": "low | medium | critical"
+  "urgencyLevel": "low | medium | critical | unknown"
 }
     `;
 
@@ -52,7 +51,7 @@ Return JSON:
     const cleaned = result.content.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(cleaned);
 
-    const allowedUrgency = ["low", "medium", "critical"];
+    const allowedUrgency = ["low", "medium", "critical", "unknown"];
     if (
       typeof parsed.structuredNote !== "string" ||
       typeof parsed.suggestedSpecialist !== "string" ||

@@ -17,9 +17,9 @@ const consultationSchema = new mongoose.Schema(
     rawInput: { type: String, required: true },
     structuredNote: { type: String },
     urgencyLevel: {
-      type: String,
-      enum: ["low", "medium", "critical"],
-      default: "low",
+  type: String,
+  enum: ["low", "medium", "critical", "unknown"],
+
     },
     suggestedSpecialist: { type: String },
     status: {
