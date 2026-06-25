@@ -113,7 +113,7 @@ const getAllConsultations = async (req, res) => {
   try {
     const consultations = await Consultation.find({
       doctorId: req.user.id,
-      followupId: null,
+      // followupId: null,
     })
       .populate("patientId", "name age")
       .sort({ createdAt: -1 });
