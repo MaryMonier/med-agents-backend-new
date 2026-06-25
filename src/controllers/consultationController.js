@@ -109,6 +109,8 @@ const createConsultation = async (req, res) => {
   }
 };
 
+
+
 const getAllConsultations = async (req, res) => {
   try {
     const consultations = await Consultation.find({})
@@ -207,11 +209,40 @@ const deleteConsultation = async (req, res) => {
   }
 };
 
+const getAIRecommendation = async (req, res) => {
+  try {
+    const {
+      symptoms,
+      diagnosis,
+      rawInput,
+      language,
+    } = req.body;
+
+    const agentResult = await runClinicalRecAgent({
+      rawInput,
+      symptoms,
+      diagnosis,
+      language: language || "en",
+    });
+
+    res.status(200).json({
+      success: true,
+      data: agentResult,
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 module.exports = {
   createConsultation,
   getAllConsultations,
   getConsultationById,
   updateConsultation,
   deleteConsultation,
-  getAllConsultationsByDoctor
+  getAllConsultationsByDoctor,
+  getAIRecommendation
 };
