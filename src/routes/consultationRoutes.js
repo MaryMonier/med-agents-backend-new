@@ -6,16 +6,19 @@ const {
   getConsultationById,
   updateConsultation,
   deleteConsultation,
+  getAllConsultationsByDoctor,
+  getAIRecommendation,
 } = require("../controllers/consultationController");
 
 const authMiddleware = require("../middleware/auth.middleware");
 router.use(authMiddleware);
 
 router.route("/").get(getAllConsultations).post(createConsultation);
+router.route("/doctor").get(getAllConsultationsByDoctor)
+router.route("/ai-recommendation").post(getAIRecommendation)
 router
   .route("/:id")
   .get(getConsultationById)
   .put(updateConsultation)
   .delete(deleteConsultation);
-
 module.exports = router;

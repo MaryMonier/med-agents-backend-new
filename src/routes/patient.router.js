@@ -10,7 +10,7 @@ const adminMiddleware = require("../middleware/admin.middleware")
 
 const router = require("express").Router();
 
-router.get("/",authMiddleware,adminMiddleware,getAllPatients)
+router.get("/",authMiddleware,getAllPatients)
 router.get("/doctor",authMiddleware,getAllPatientsByDoctor)
 router.get("/:id",authMiddleware,getPatientById)
 router.post("/",authMiddleware,createPatient)
