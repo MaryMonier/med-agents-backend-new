@@ -65,7 +65,7 @@ const testAI = async (req, res) => {
 };
 const getAllDoctors = async (req, res) => {
   try {
-    const doctors = await User.find().select('-passwordHash');
+    const doctors = await User.find({ role: 'doctor' }).select('-passwordHash');
     res.json({ success: true, count: doctors.length, data: doctors });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
