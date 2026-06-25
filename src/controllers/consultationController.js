@@ -111,10 +111,7 @@ const createConsultation = async (req, res) => {
 
 const getAllConsultations = async (req, res) => {
   try {
-    const consultations = await Consultation.find({
-      doctorId: req.user.id,
-      // followupId: null,
-    })
+    const consultations = await Consultation.find({})
       .populate("patientId", "name age")
       .sort({ createdAt: -1 });
 
@@ -127,6 +124,29 @@ const getAllConsultations = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+const getAllConsultationsByDoctor = async (req, res) => {
+  console.log(req.user);
+  
+
+  try {
+    const consultations = await Consultation.find({
+      doctorId: req.user.id,
+    })
+      .populate("patientId", "name age")
+      .sort({ createdAt: -1 });
+console.log(consultations);
+
+    res.status(200).json({
+      success: true,
+      count: consultations.length,
+      data: consultations,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 
 const getConsultationById = async (req, res) => {
   try {
@@ -193,4 +213,5 @@ module.exports = {
   getConsultationById,
   updateConsultation,
   deleteConsultation,
+  getAllConsultationsByDoctor
 };
