@@ -109,11 +109,11 @@ const createConsultation = async (req, res) => {
   }
 };
 
+
+
 const getAllConsultations = async (req, res) => {
   try {
-    const consultations = await Consultation.find({
-      followupId: null,
-    })
+    const consultations = await Consultation.find({})
       .populate("patientId", "name age")
       .sort({ createdAt: -1 });
 
@@ -126,6 +126,29 @@ const getAllConsultations = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+const getAllConsultationsByDoctor = async (req, res) => {
+  console.log(req.user);
+  
+
+  try {
+    const consultations = await Consultation.find({
+      doctorId: req.user.id,
+    })
+      .populate("patientId", "name age")
+      .sort({ createdAt: -1 });
+console.log(consultations);
+
+    res.status(200).json({
+      success: true,
+      count: consultations.length,
+      data: consultations,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 
 const getConsultationById = async (req, res) => {
   try {
@@ -186,10 +209,40 @@ const deleteConsultation = async (req, res) => {
   }
 };
 
+const getAIRecommendation = async (req, res) => {
+  try {
+    const {
+      symptoms,
+      diagnosis,
+      rawInput,
+      language,
+    } = req.body;
+
+    const agentResult = await runClinicalRecAgent({
+      rawInput,
+      symptoms,
+      diagnosis,
+      language: language || "en",
+    });
+
+    res.status(200).json({
+      success: true,
+      data: agentResult,
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 module.exports = {
   createConsultation,
   getAllConsultations,
   getConsultationById,
   updateConsultation,
   deleteConsultation,
+  getAllConsultationsByDoctor,
+  getAIRecommendation
 };
