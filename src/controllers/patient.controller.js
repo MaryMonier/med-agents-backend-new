@@ -201,7 +201,7 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId createdAt",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId createdAt followUpDate",
       )
       .sort({ createdAt: -1 });
 
@@ -219,6 +219,7 @@ const getPatientHistory = async (req, res) => {
           urgencyLevel: consultation.urgencyLevel,
           suggestedSpecialist: consultation.suggestedSpecialist || null,
           structuredNote: consultation.structuredNote || null,
+          followUpDate: consultation?.followUpDate || null,
           isFollowup: !!consultation.followupId, // لو كانت من فولو أب
           prescription: prescription
             ? {
