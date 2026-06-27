@@ -209,7 +209,7 @@ const getPatientHistory = async (req, res) => {
       consultations.map(async (consultation) => {
         const prescription = await Prescription.findOne({
           consultationId: consultation._id,
-        }).select("medications interactions warnings");
+        }).select("_id medications interactions warnings");
 
         return {
           consultationId: consultation._id,

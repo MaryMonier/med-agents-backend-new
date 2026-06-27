@@ -153,7 +153,11 @@ const getAllPrescriptions = async (req, res, next) => {
   try {
     const prescriptions = await Prescription.find()
       .populate("patientId", "name")
-      .populate("consultationId", "followupId")
+      .populate({
+        path: "consultationId",
+        select: "followupId doctorId",
+        populate: { path: "doctorId", select: "name" },
+      })
       .sort({ createdAt: -1 });
 
     res.status(200).json({
