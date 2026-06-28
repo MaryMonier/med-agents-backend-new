@@ -31,6 +31,19 @@ const login = async (req, res) => {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
+
+    if (user.role === "doctor" && !user.trialStartedAt) {
+    user.trialStartedAt = new Date();
+
+    user.trialEndsAt = new Date(
+        Date.now() + 14 * 24 * 60 * 60 * 1000
+    );
+
+    user.subscriptionStatus = "trial";
+
+    await user.save();
+}
+
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }

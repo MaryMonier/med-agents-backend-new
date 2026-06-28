@@ -4,8 +4,11 @@ const authMiddleware = require('../middleware/auth.middleware');
 const reportGenAgent = require('../agents/reportGen.agent');
 const Consultation = require('../models/Consultation');
 const Prescription = require('../models/Prescription');
+const checkSubscription = require('../middleware/checkSubscription.middleware');
 
-router.post('/generate', authMiddleware, async (req, res, next) => {
+
+
+router.post('/generate', authMiddleware, checkSubscription,async (req, res, next) => {
   try {
     const { consultationId, language } = req.body;
 

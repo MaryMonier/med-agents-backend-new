@@ -15,6 +15,7 @@ const prescriptionRoutes = require("./routes/prescriptionRoutes");
 const consultationRoutes = require("./routes/consultationRoutes");
 const drugSafetyRoutes = require("./routes/drugSafetyRoutes");
 const quickDrugCheckRoutes = require("./routes/quickDrugCheckRoutes");
+const subscriptionRoutes = require("./routes/subscription.router");
 
 // const patientRouter = require("./patient/patient.router")
 // const medicalAgentRouter = require('./routes/medicalAgentRoutes');
@@ -54,7 +55,7 @@ app.use("/api/medical-agent", medicalAgentRouter);
 
 app.use("/api/followup-agent", followupAgentRouter);
 app.use("/api/drug-safety", quickDrugCheckRoutes);
-
+app.use("/api/subscription", subscriptionRoutes);
 app.get("/", (req, res) => {
   res.json({ message: "Med Agents API is running!" });
 });

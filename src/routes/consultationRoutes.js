@@ -11,7 +11,10 @@ const {
 } = require("../controllers/consultationController");
 
 const authMiddleware = require("../middleware/auth.middleware");
+const checkSubscription = require("../middleware/checkSubscription.middleware");
 router.use(authMiddleware);
+router.use(authMiddleware);
+router.use(checkSubscription);
 
 router.route("/").get(getAllConsultations).post(createConsultation);
 router.route("/doctor").get(getAllConsultationsByDoctor)
