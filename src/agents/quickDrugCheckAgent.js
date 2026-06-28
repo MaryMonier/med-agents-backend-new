@@ -36,8 +36,8 @@ const runQuickDrugCheck = async ({
   language = "en",
 }) => {
   try {
-    // لو مفيش أدوية تانية شغالة ومفيش سن للمريض، مفيش داعي نكلم الـ AI خالص
-    if (activeMedications.length === 0 && patientAge === null) {
+    // لو مفيش أدوية تانية شغالة، مفيش حساسية، ومفيش سن للمريض، مفيش داعي نكلم الـ AI خالص
+    if (activeMedications.length === 0 && allergies.length === 0 && patientAge === null) {
       return { success: true, data: { hasIssue: false, message: null } };
     }
 
@@ -63,9 +63,15 @@ const runQuickDrugCheck = async ({
     const ageInfo = patientAge !== null ? `${patientAge} years old` : "Unknown";
     const genderInfo = patientGender || "Unknown";
 
+    // أدوية شغالة بالفعل وهي نفس الدواء الجديد (من روشتة سابقة لسة معداش معادها، أو من نفس الروشتة الحالية)
+    const duplicateNames = activeMedications
+      .filter((m) => m.name.trim().toLowerCase() === newDrug.name.trim().toLowerCase())
+      .map((m) => (m.isChronic ? `${m.name} (chronic)` : m.name));
+
     const userPrompt = `New drug being added: ${newDrug.name}
 (Note: if the drug name includes a generic/active ingredient name in parentheses, that is the active ingredient — check allergies and interactions against BOTH the brand name and the active ingredient name.)
-Currently active medications: ${activeList}
+Currently active medications (including ones still running from previous prescriptions): ${activeList}
+${duplicateNames.length > 0 ? `IMPORTANT: "${newDrug.name}" is already an active medication for this patient: ${duplicateNames.join(", ")}.` : ""}
 Patient allergies: ${allergiesList}
 Patient age: ${ageInfo}
 Patient gender: ${genderInfo}
@@ -73,9 +79,10 @@ FDA interaction data:
 ${fdaContext}
 
 Check for ANY of the following:
-1. A dangerous interaction between "${newDrug.name}" (including its active ingredient) and any of the active medications listed above.
-2. An allergy conflict — check if the patient's allergies list contains the active ingredient or brand name of "${newDrug.name}".
-3. An age-related contraindication for "${newDrug.name}" given the patient's age and gender (for example: aspirin or any drug containing aspirin/salicylate in children/teenagers under 18 can cause Reye's syndrome).
+1. "${newDrug.name}" is already prescribed and still active (see IMPORTANT note above, if present).
+2. A dangerous interaction between "${newDrug.name}" (including its active ingredient) and any of the active medications listed above.
+3. An allergy conflict — check if the patient's allergies list contains the active ingredient or brand name of "${newDrug.name}".
+4. An age-related contraindication for "${newDrug.name}" given the patient's age and gender (for example: aspirin or any drug containing aspirin/salicylate in children/teenagers under 18 can cause Reye's syndrome).
 
 Is there any issue from the above?`;
 
@@ -90,9 +97,11 @@ Is there any issue from the above?`;
 STRICT RULES:
 - Respond ONLY in ${lang}
 - Respond with ONLY ONE short sentence, no bullet points, no headers, no lists
+- For an already-active/duplicate medication, format EXACTLY like: "<Drug> is already an active prescription for this patient"
 - For drug-drug interactions, format EXACTLY like: "<Drug A> can't be used with <Drug B> because <short reason>"
 - For allergy conflicts, format EXACTLY like: "<Drug> can't be used because patient is allergic to <allergen>"
 - For age-related issues, format EXACTLY like: "<Drug> can't be used at age <age> because <short reason>"
+- If there is more than one issue, mention only the single most important one
 - If there is NO issue at all, respond with exactly: NONE
 - Never write more than one sentence
 - Never give a lengthy clinical explanation

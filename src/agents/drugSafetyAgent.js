@@ -23,7 +23,7 @@ const callLLM = async (params) => {
   }
 };
 
-const runDrugSafetyAgent = async ({ medications = [], allergies = [], chronicConditions = [], language = 'en' }) => {
+const runDrugSafetyAgent = async ({ medications = [], allergies = [], chronicConditions = [], age = null, language = 'en' }) => {
   try {
     const lang = language === 'ar' ? 'Arabic' : 'English';
 
@@ -52,17 +52,23 @@ Drug: ${drug.name}
       ? chronicConditions.join(', ')
       : (language === 'ar' ? 'لا يوجد' : 'None');
 
+    const ageLine = age !== null && age !== undefined
+      ? (language === 'ar' ? `عمر المريض: ${age} سنة` : `Patient Age: ${age} years`)
+      : '';
+
     const userPrompt = language === 'ar'
       ? `حلل سلامة الأدوية:
 الأدوية: ${medicationsList}
 الحساسية: ${allergiesList}
 الأمراض المزمنة: ${conditionsList}
+${ageLine}
 بيانات FDA: ${fdaContext}
 إرشادات طبية: ${context}`
       : `Analyze medication safety:
 Medications: ${medicationsList}
 Allergies: ${allergiesList}
 Chronic Conditions: ${conditionsList}
+${ageLine}
 FDA Data: ${fdaContext}
 Medical Guidelines: ${context}`;
 
@@ -77,6 +83,7 @@ Medical Guidelines: ${context}`;
 STRICT RULES:
 - Respond ONLY in ${lang}
 - Only analyze drug safety, interactions, and contraindications
+- Consider the patient's age when relevant (e.g. pediatric/geriatric dosing concerns)
 - Always start with one of: [LOW RISK] / [MODERATE RISK] / [HIGH RISK] / [CRITICAL]
 - If life-threatening interaction detected, start with [CRITICAL]
 - Never provide a final clinical decision
