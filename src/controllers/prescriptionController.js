@@ -1,47 +1,150 @@
 const Prescription = require("../models/Prescription");
 const Consultation = require("../models/Consultation");
 const Patient = require("../models/Patient");
+const { runQuickDrugCheck } = require("../agents/quickDrugCheckAgent");
 
-// ─── Helper: OpenFDA Drug Interaction Checker ────────────────────────────────
-const checkInteractions = async (medications) => {
-  const foundInteractions = [];
-  const foundWarnings = [];
+// ─── Helper: Age from date of birth ──────────────────────────────────────────
+const calculateAge = (dob) => {
+  if (!dob) return null;
+  const today = new Date();
+  const birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+};
 
-  await Promise.all(
-    medications.map(async (med) => {
-      try {
-        const drugName = encodeURIComponent(med.name);
-        const url = `https://api.fda.gov/drug/label.json?search=drug_interactions:"${drugName}"&limit=1`;
+// ─── Helper: Build a readable display string for a structured medication ────
+// Kept so existing UI (PatientHistory / PrescriptionsList) that reads
+// med.dose / med.frequency / med.duration keeps working without changes.
+// Defensive: also handles older documents saved before dosageAmount/
+// frequencyCount/etc existed, which only have the old flat dose/frequency/
+// duration strings.
+const decorateMedication = (med) => {
+  const plain = med?.toObject ? med.toObject() : med;
+  if (!plain) return plain;
 
-        const response = await fetch(url);
-        if (!response.ok) return;
+  const hasStructuredDosage = plain.dosageAmount !== undefined && plain.dosageUnit !== undefined;
+  const hasStructuredFrequency = plain.frequencyCount !== undefined && plain.frequencyPeriod !== undefined;
+  const hasStructuredDuration = plain.durationValue !== undefined && plain.durationUnit !== undefined;
 
-        const data = await response.json();
-        const result = data.results?.[0];
-        if (!result) return;
+  const dose = hasStructuredDosage
+    ? `${plain.dosageAmount}${plain.dosageUnit}`
+    : plain.dose || '';
 
-        if (result.drug_interactions?.length > 0) {
-          const interactionText = result.drug_interactions[0].slice(0, 300);
-          foundInteractions.push(`${med.name}: ${interactionText}`);
-        }
-        if (result.warnings?.length > 0) {
-          const warningText = result.warnings[0].slice(0, 300);
-          foundWarnings.push(`${med.name}: ${warningText}`);
-        }
-        if (result.boxed_warning?.length > 0) {
-          const boxedText = result.boxed_warning[0].slice(0, 300);
-          foundWarnings.push(`[BOXED WARNING] ${med.name}: ${boxedText}`);
-        }
-      } catch (err) {
-        console.error(`OpenFDA error for ${med.name}:`, err.message);
-      }
+  const frequency = hasStructuredFrequency
+    ? `${plain.frequencyCount}x ${plain.frequencyPeriod}`
+    : plain.frequency || '';
+
+  const duration = plain.isChronic
+    ? 'Lifelong (Chronic)'
+    : hasStructuredDuration
+      ? `${plain.durationValue} ${plain.durationUnit}`
+      : plain.duration || '';
+
+  return { ...plain, dose, frequency, duration };
+};
+
+const decorateMedications = (medications = []) => medications.map(decorateMedication);
+
+// ─── Helper: end date for a (non-chronic) medication, given a start date ─────
+const getMedicationEndDate = (startDate, med) => {
+  if (med.isChronic) return null; // never ends
+  const end = new Date(startDate);
+  const value = Number(med.durationValue) || 0;
+  if (med.durationUnit === "days") end.setDate(end.getDate() + value);
+  else if (med.durationUnit === "weeks") end.setDate(end.getDate() + value * 7);
+  else if (med.durationUnit === "months") end.setMonth(end.getMonth() + value);
+  return end;
+};
+
+// ─── Helper: is a medication from a past prescription still "active" now ────
+// Active = isChronic (lifelong) OR end date (createdAt + duration) is in the future.
+const isMedicationStillActive = (prescriptionCreatedAt, med) => {
+  if (med.isChronic) return true;
+  const end = getMedicationEndDate(prescriptionCreatedAt, med);
+  if (!end) return true;
+  return end.getTime() > Date.now();
+};
+
+// ─── Helper: find ongoing medications for a patient (excluding one prescription) ─
+const findOngoingMedicationConflicts = async (patientId, newMedications, excludePrescriptionId = null) => {
+  const query = { patientId };
+  if (excludePrescriptionId) query._id = { $ne: excludePrescriptionId };
+
+  const pastPrescriptions = await Prescription.find(query).sort({ createdAt: -1 });
+
+  const conflicts = [];
+  const newNames = newMedications.map((m) => m.name.trim().toLowerCase());
+  const newIngredients = newMedications
+    .map((m) => m.activeIngredient?.trim().toLowerCase())
+    .filter(Boolean);
+
+  pastPrescriptions.forEach((presc) => {
+    presc.medications.forEach((med) => {
+      if (!isMedicationStillActive(presc.createdAt, med)) return;
+
+      const matchesName = newNames.includes(med.name.trim().toLowerCase());
+      const matchesIngredient =
+        med.activeIngredient && newIngredients.includes(med.activeIngredient.trim().toLowerCase());
+      if (!matchesName && !matchesIngredient) return;
+
+      conflicts.push({
+        name: med.name,
+        activeIngredient: med.activeIngredient || null,
+        prescriptionId: presc._id,
+        consultationId: presc.consultationId,
+        prescribedOn: presc.createdAt,
+        isChronic: med.isChronic,
+        endsOn: med.isChronic ? null : getMedicationEndDate(presc.createdAt, med),
+      });
+    });
+  });
+
+  return conflicts;
+};
+
+// ─── Helper: run the Quick Drug Check agent for every medication in a
+// prescription, attaching a single short sentence (or null) to each one.
+// Each medication is checked against: the OTHER medications in this same
+// prescription + any still-active medications from the patient's previous
+// prescriptions (the "ongoing conflict" case is folded into this single
+// message instead of being a separate warning), plus allergies and age.
+const runQuickCheckForMedications = async (medications, patient, ongoingConflicts = []) => {
+  const age = calculateAge(patient?.dateOfBirth);
+  const allergies = patient?.allergies || [];
+
+  const ongoingAsActive = ongoingConflicts.map((c) => ({
+    name: c.name,
+    activeIngredient: c.activeIngredient || null,
+    isChronic: c.isChronic,
+  }));
+
+  const results = await Promise.all(
+    medications.map(async (med, index) => {
+      const otherMedsInThisPrescription = medications
+        .filter((_, i) => i !== index)
+        .map((m) => ({ name: m.name, activeIngredient: m.activeIngredient || null }));
+
+      const activeMedications = [...otherMedsInThisPrescription, ...ongoingAsActive];
+
+      const result = await runQuickDrugCheck({
+        newDrug: { name: med.name, activeIngredient: med.activeIngredient || null },
+        activeMedications,
+        allergies,
+        patientAge: age,
+        patientGender: patient?.gender || null,
+        language: "en",
+      });
+
+      return result?.success ? result.data?.message || null : null;
     }),
   );
 
-  return { interactions: foundInteractions, warnings: foundWarnings };
+  return medications.map((med, i) => ({ ...med, quickCheckMessage: results[i] }));
 };
 
-// ─── Search Drugs from FDA ────────────────────────────────────────────────────
+// ─── Search Drugs from FDA (for autocomplete dropdown) ───────────────────────
 // GET /api/prescriptions/drugs/search?name=aspirin
 const searchDrugs = async (req, res, next) => {
   try {
@@ -71,13 +174,24 @@ const searchDrugs = async (req, res, next) => {
     const results = data.results || [];
 
     // بنرجع بيانات مبسطة مش الـ response كامل
-    const drugs = results.map((drug) => ({
-      brandName: drug.openfda?.brand_name?.[0] || "N/A",
-      genericName: drug.openfda?.generic_name?.[0] || "N/A",
-      manufacturer: drug.openfda?.manufacturer_name?.[0] || "N/A",
-      dosageForms: drug.openfda?.dosage_form || [],
-      route: drug.openfda?.route?.[0] || "N/A",
-    }));
+    const seen = new Set();
+    const drugs = [];
+    results.forEach((drug) => {
+      const brandName = drug.openfda?.brand_name?.[0] || null;
+      const genericName = drug.openfda?.generic_name?.[0] || null;
+      const displayName = brandName || genericName || "N/A";
+      const key = displayName.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      drugs.push({
+        brandName: brandName || "N/A",
+        genericName: genericName || "N/A",
+        displayName,
+        manufacturer: drug.openfda?.manufacturer_name?.[0] || "N/A",
+        dosageForms: drug.openfda?.dosage_form || [],
+        route: drug.openfda?.route?.[0] || "N/A",
+      });
+    });
 
     res.status(200).json({
       success: true,
@@ -89,10 +203,68 @@ const searchDrugs = async (req, res, next) => {
   }
 };
 
+// ─── Check medication safety (Quick Drug Check agent) ────────────────────────
+// Used live by the consultation form while the doctor is building the
+// prescription, BEFORE hitting "Save Prescription". Returns one short
+// sentence per medication (or null when clean) — same agent/format used by
+// the dashboard's Quick Drug Check.
+// POST /api/prescriptions/safety-check
+// body: { patientId, medications: [{ name, dosageAmount, dosageUnit, ... }] }
+const checkPrescriptionSafety = async (req, res, next) => {
+  try {
+    const { patientId, medications } = req.body;
+
+    if (!patientId) {
+      return res.status(400).json({ success: false, message: "patientId is required" });
+    }
+    if (!Array.isArray(medications) || medications.length === 0) {
+      return res.status(400).json({ success: false, message: "medications array is required" });
+    }
+    if (!medications.every((m) => m.name && m.name.trim())) {
+      return res.status(400).json({ success: false, message: "Each medication must have a name" });
+    }
+
+    const patient = await Patient.findById(patientId).select(
+      "name gender allergies chronicConditions dateOfBirth",
+    );
+    if (!patient) {
+      return res.status(404).json({ success: false, message: "Patient not found" });
+    }
+
+    const age = calculateAge(patient.dateOfBirth);
+
+    const ongoingConflicts = await findOngoingMedicationConflicts(
+      patientId,
+      medications,
+      req.body.excludePrescriptionId || null,
+    );
+
+    const checkedMedications = await runQuickCheckForMedications(
+      medications,
+      patient,
+      ongoingConflicts,
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        patient: { id: patient._id, name: patient.name, age },
+        medications: checkedMedications,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // ─── Create Prescription ──────────────────────────────────────────────────────
 const createPrescription = async (req, res, next) => {
   try {
     const { consultationId, patientId, medications, language } = req.body;
+
+    if (!Array.isArray(medications) || medications.length === 0) {
+      return res.status(400).json({ success: false, message: "At least one medication is required" });
+    }
 
     const consultation = await Consultation.findById(consultationId);
     if (!consultation) {
@@ -116,55 +288,122 @@ const createPrescription = async (req, res, next) => {
       return next(err);
     }
 
-    const { interactions, warnings } = await checkInteractions(medications);
-
-    const allergyWarnings = [];
-    if (patient.allergies && patient.allergies.length > 0) {
-      medications.forEach((med) => {
-        patient.allergies.forEach((allergy) => {
-          if (med.name.toLowerCase().includes(allergy.toLowerCase())) {
-            allergyWarnings.push(
-              `Patient is allergic to ${allergy} — check ${med.name}`,
-            );
-          }
-        });
-      });
-    }
+    const ongoingConflicts = await findOngoingMedicationConflicts(patientId, medications);
+    const medicationsWithQuickCheck = await runQuickCheckForMedications(
+      medications,
+      patient,
+      ongoingConflicts,
+    );
 
     const prescription = await Prescription.create({
       consultationId,
       patientId,
-      medications,
-      interactions,
-      warnings: [...warnings, ...allergyWarnings],
+      doctorId: req.user.id,
+      medications: medicationsWithQuickCheck,
       language: language || consultation.language,
     });
+
+    const populated = await Prescription.findById(prescription._id)
+      .populate("patientId", "name dateOfBirth gender allergies nationalID")
+      .populate("consultationId", "symptoms diagnosis createdAt followupId");
 
     res.status(201).json({
       success: true,
       message: "Prescription created successfully",
-      data: prescription,
+      data: {
+        ...populated.toObject(),
+        medications: decorateMedications(populated.medications),
+      },
     });
   } catch (err) {
     next(err);
   }
 };
-const getAllPrescriptions = async (req, res, next) => {
+
+// ─── Get distinct dates that have prescriptions (for calendar highlighting) ──
+// GET /api/prescriptions/dates
+const getPrescriptionDates = async (req, res, next) => {
   try {
-    const prescriptions = await Prescription.find()
-      .populate("patientId", "name")
-      .populate("consultationId", "followupId")
-      .sort({ createdAt: -1 });
+    const isAdmin = req.user.role === "admin";
+    const filter = isAdmin ? {} : { doctorId: req.user.id };
+
+    const prescriptions = await Prescription.find(filter).select("createdAt");
+    const dateSet = new Set(
+      prescriptions.map((p) => p.createdAt.toISOString().split("T")[0]),
+    );
 
     res.status(200).json({
       success: true,
-      count: prescriptions.length,
-      data: prescriptions,
+      data: Array.from(dateSet),
     });
   } catch (err) {
     next(err);
   }
 };
+
+// ─── Get All Prescriptions for the logged-in doctor (with optional search) ──
+// GET /api/prescriptions?search=name-or-nationalID&date=YYYY-MM-DD&page=1&limit=10
+const getAllPrescriptions = async (req, res, next) => {
+  try {
+    const { search, date, page = 1, limit = 10 } = req.query;
+    const isAdmin = req.user.role === "admin";
+    const filter = isAdmin ? {} : { doctorId: req.user.id };
+
+    if (search && search.trim()) {
+      const matchingPatients = await Patient.find({
+        $or: [
+          { name: { $regex: search.trim(), $options: "i" } },
+          { nationalID: { $regex: search.trim(), $options: "i" } },
+        ],
+      }).select("_id");
+      filter.patientId = { $in: matchingPatients.map((p) => p._id) };
+    }
+
+    if (date) {
+      const dayStart = new Date(date);
+      if (!isNaN(dayStart.getTime())) {
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+        filter.createdAt = { $gte: dayStart, $lt: dayEnd };
+      }
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+    const total = await Prescription.countDocuments(filter);
+
+    const prescriptions = await Prescription.find(filter)
+      .populate("patientId", "name dateOfBirth gender allergies nationalID")
+      .populate({
+        path: "consultationId",
+        select: "followupId doctorId diagnosis symptoms createdAt",
+        populate: { path: "doctorId", select: "name" },
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
+
+    const data = prescriptions.map((p) => ({
+      ...p.toObject(),
+      medications: decorateMedications(p.medications),
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: data.length,
+      pagination: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(total / Number(limit)) || 1,
+      },
+      data,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // ─── Get Prescription by Consultation ────────────────────────────────────────
 const getPrescriptionByConsultation = async (req, res, next) => {
   try {
@@ -180,7 +419,13 @@ const getPrescriptionByConsultation = async (req, res, next) => {
       return next(err);
     }
 
-    res.status(200).json({ success: true, data: prescription });
+    res.status(200).json({
+      success: true,
+      data: {
+        ...prescription.toObject(),
+        medications: decorateMedications(prescription.medications),
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -195,10 +440,15 @@ const getPrescriptionsByPatient = async (req, res, next) => {
       .populate("consultationId", "symptoms diagnosis createdAt")
       .sort({ createdAt: -1 });
 
+    const data = prescriptions.map((p) => ({
+      ...p.toObject(),
+      medications: decorateMedications(p.medications),
+    }));
+
     res.status(200).json({
       success: true,
-      count: prescriptions.length,
-      data: prescriptions,
+      count: data.length,
+      data,
     });
   } catch (err) {
     next(err);
@@ -211,7 +461,7 @@ const getPrescriptionById = async (req, res, next) => {
     const prescription = await Prescription.findById(req.params.id)
       .populate(
         "patientId",
-        "name dateOfBirth gender bloodType allergies chronicConditions",
+        "name dateOfBirth gender bloodType allergies chronicConditions nationalID",
       )
       .populate(
         "consultationId",
@@ -224,7 +474,13 @@ const getPrescriptionById = async (req, res, next) => {
       return next(err);
     }
 
-    res.status(200).json({ success: true, data: prescription });
+    res.status(200).json({
+      success: true,
+      data: {
+        ...prescription.toObject(),
+        medications: decorateMedications(prescription.medications),
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -254,43 +510,46 @@ const updatePrescription = async (req, res, next) => {
 
     const { medications, language } = req.body;
 
-    let interactions = prescription.interactions;
-    let warnings = prescription.warnings;
+    let updatedMedications = medications;
 
     if (medications) {
-      const patient = await Patient.findById(prescription.patientId);
-      const interactionResult = await checkInteractions(medications);
-      interactions = interactionResult.interactions;
-      warnings = interactionResult.warnings;
-
-      if (patient?.allergies?.length > 0) {
-        medications.forEach((med) => {
-          patient.allergies.forEach((allergy) => {
-            if (med.name.toLowerCase().includes(allergy.toLowerCase())) {
-              warnings.push(
-                `Patient is allergic to ${allergy} — check ${med.name}`,
-              );
-            }
-          });
-        });
+      if (!Array.isArray(medications) || medications.length === 0) {
+        return res.status(400).json({ success: false, message: "At least one medication is required" });
       }
+
+      const patient = await Patient.findById(prescription.patientId);
+
+      const ongoingConflicts = await findOngoingMedicationConflicts(
+        prescription.patientId,
+        medications,
+        prescription._id,
+      );
+
+      updatedMedications = await runQuickCheckForMedications(
+        medications,
+        patient,
+        ongoingConflicts,
+      );
     }
 
     const updated = await Prescription.findByIdAndUpdate(
       req.params.id,
       {
-        ...(medications && { medications }),
+        ...(medications && { medications: updatedMedications }),
         ...(language && { language }),
-        interactions,
-        warnings,
       },
       { new: true, runValidators: true },
-    );
+    )
+      .populate("patientId", "name dateOfBirth gender allergies nationalID")
+      .populate("consultationId", "symptoms diagnosis createdAt followupId");
 
     res.status(200).json({
       success: true,
       message: "Prescription updated successfully",
-      data: updated,
+      data: {
+        ...updated.toObject(),
+        medications: decorateMedications(updated.medications),
+      },
     });
   } catch (err) {
     next(err);
@@ -344,10 +603,12 @@ const deletePrescription = async (req, res, next) => {
 
 module.exports = {
   searchDrugs,
+  checkPrescriptionSafety,
   createPrescription,
   getPrescriptionByConsultation,
   getPrescriptionsByPatient,
   getPrescriptionById,
+  getPrescriptionDates,
   updatePrescription,
   deletePrescription,
   getAllPrescriptions,
