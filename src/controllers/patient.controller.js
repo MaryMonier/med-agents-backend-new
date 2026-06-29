@@ -46,6 +46,44 @@ const getAllPatientsByDoctor = async (request, response) => {
   }
 };
 
+const getPatientsByDoctorId = async (request, response) => {
+  try {
+    const { doctorId } = request.params;
+
+    // Admins can view any doctor's patients. Doctors can only view their own.
+    if (request.user.role !== "admin" && request.user.id !== doctorId) {
+      return response.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own patients.",
+      });
+    }
+
+    const { page = 1, limit = 10 } = request.query;
+    const skip = (page - 1) * limit;
+
+    const totalPatients = await Patient.countDocuments({ createdBy: doctorId });
+    const patients = await Patient.find({ createdBy: doctorId })
+      .skip(skip)
+      .limit(Number(limit))
+      .sort({ createdAt: -1 });
+
+    return response.status(200).json({
+      success: true,
+      data: patients,
+      pagination: {
+        total: totalPatients,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(totalPatients / limit),
+      },
+    });
+  } catch (error) {
+    return response
+      .status(500)
+      .json({ success: false, message: error.message });
+  }
+};
+
 const getAllPatients = async (request, response) => {
   try {
     const { search, page = 1, limit = 10 } = request.query;
@@ -189,9 +227,11 @@ const getPatientHistory = async (req, res) => {
   try {
     const patientId = req.params.id;
 
-    const patient = await Patient.findById(patientId).select(
-      "name dateOfBirth gender bloodType allergies chronicConditions",
-    );
+    const patient = await Patient.findById(patientId)
+      .select(
+        "name dateOfBirth gender bloodType allergies chronicConditions createdBy",
+      )
+      .populate("createdBy", "name specialty email");
 
     if (!patient) {
       return res
@@ -201,7 +241,7 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId createdAt followUpDate",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId createdAt",
       )
       .sort({ createdAt: -1 });
 
@@ -219,7 +259,6 @@ const getPatientHistory = async (req, res) => {
           urgencyLevel: consultation.urgencyLevel,
           suggestedSpecialist: consultation.suggestedSpecialist || null,
           structuredNote: consultation.structuredNote || null,
-          followUpDate: consultation?.followUpDate || null,
           isFollowup: !!consultation.followupId, // لو كانت من فولو أب
           prescription: prescription
             ? {
@@ -248,5 +287,6 @@ module.exports = {
   deletePatient,
   updatePatient,
   getAllPatientsByDoctor,
+  getPatientsByDoctorId,
   getPatientHistory,
 };

@@ -5,13 +5,15 @@ const { getAllPatients,
      deletePatient, 
      getPatientHistory,
      updatePatient,
-    getAllPatientsByDoctor } = require("../controllers/patient.controller")
+    getAllPatientsByDoctor,
+    getPatientsByDoctorId } = require("../controllers/patient.controller")
 const adminMiddleware = require("../middleware/admin.middleware")
 
 const router = require("express").Router();
 
 router.get("/",authMiddleware,getAllPatients)
 router.get("/doctor",authMiddleware,getAllPatientsByDoctor)
+router.get("/by-doctor/:doctorId",authMiddleware,getPatientsByDoctorId)
 router.get("/:id",authMiddleware,getPatientById)
 router.post("/",authMiddleware,createPatient)
 router.delete("/:id",authMiddleware,deletePatient)
