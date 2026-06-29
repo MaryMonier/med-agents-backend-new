@@ -1,5 +1,6 @@
 const Consultation = require("../models/Consultation");
 const Followup = require("../models/Followup");
+const Patient = require("../models/Patient");
 const { runClinicalRecAgent } = require("../agents/clinicalRecAgent");
 
 const getStartOfTodayInEgypt = () => {

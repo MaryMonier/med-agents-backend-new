@@ -48,7 +48,7 @@ const getAllPatientsByDoctor = async (request, response) => {
       });
     }
     const totalPatients = await Patient.countDocuments({ createdBy });
-    const allPatients = await Patient.find({ createdBy })
+    const allPatients = await Patient.find({$or:[{ createdBy},{ doctors:createdBy}]})
       .skip(skip)
       .limit(Number(limit));
 
