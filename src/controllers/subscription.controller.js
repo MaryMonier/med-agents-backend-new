@@ -97,7 +97,58 @@ const renewSubscription = async (req, res) => {
     });
   }
 };
+const getDoctorsSubscriptions = async (req, res) => {
+  try {
+    const doctors = await User.find(
+      { role: "doctor" },
+      "name email specialty subscription createdAt"
+    ).sort({ createdAt: -1 });
+
+    const doctorsWithDaysLeft = doctors.map((doctor) => {
+      const subscription = doctor.subscription;
+
+      let daysLeft = 0;
+
+      if (subscription?.status === "trial") {
+        daysLeft = Math.max(
+          0,
+          Math.ceil(
+            (new Date(subscription.trialEnd) - new Date()) /
+              (1000 * 60 * 60 * 24)
+          )
+        );
+      }
+
+      if (subscription?.status === "active" &&  subscription.subscriptionEnd) {
+        daysLeft = Math.max(
+          0,
+          Math.ceil(
+            (new Date(subscription.subscriptionEnd) - new Date()) /
+              (1000 * 60 * 60 * 24)
+          )
+        );
+      }
+
+      return {
+        ...doctor.toObject(),
+        daysLeft,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: doctorsWithDaysLeft,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 module.exports = {
   getMySubscription,
   renewSubscription
+  ,getDoctorsSubscriptions
 };

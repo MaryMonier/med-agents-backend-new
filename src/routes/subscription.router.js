@@ -4,6 +4,7 @@ const adminMiddleware = require("../middleware/admin.middleware");
 const {
   getMySubscription,
   renewSubscription,
+  getDoctorsSubscriptions,
 } = require("../controllers/subscription.controller");
 
 router.get("/me", authMiddleware, getMySubscription);
@@ -16,5 +17,13 @@ router.patch(
 );
 
 router.get("/me", authMiddleware, getMySubscription);
+
+router.get(
+    "/doctors",
+    authMiddleware,
+    adminMiddleware,
+    getDoctorsSubscriptions
+);
+
 
 module.exports = router;
