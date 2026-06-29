@@ -1,15 +1,20 @@
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
 
 const medicationSchema = new mongoose.Schema({
   name: { type: String, required: true },
+  // The drug's generic/active-ingredient name (e.g. "Acetaminophen" for
+  // brand "Tylenol"). Captured from the FDA autocomplete when the doctor
+  // picks a brand-name suggestion, so interaction/allergy checks can match
+  // against the active ingredient too, not just the brand name typed.
+  activeIngredient: { type: String, default: null },
   // Dosage amount + unit, e.g. amount=500, unit='mg'
   dosageAmount: { type: Number, required: true },
-  dosageUnit: { type: String, enum: ["mcg", "mg", "g"], required: true },
+  dosageUnit: { type: String, enum: ['mcg', 'mg', 'g'], required: true },
   // How many times per period, e.g. frequencyCount=2, frequencyPeriod='per day'
   frequencyCount: { type: Number, required: true },
   frequencyPeriod: {
     type: String,
-    enum: ["per day", "per week", "per month"],
+    enum: ['per day', 'per week', 'per month'],
     required: true,
   },
   // Duration is irrelevant when isChronic is true (lifelong medication)
@@ -22,7 +27,7 @@ const medicationSchema = new mongoose.Schema({
   },
   durationUnit: {
     type: String,
-    enum: ["days", "weeks", "months"],
+    enum: ['days', 'weeks', 'months'],
     required: function () {
       return !this.isChronic;
     },
@@ -37,29 +42,14 @@ const medicationSchema = new mongoose.Schema({
   quickCheckMessage: { type: String, default: null },
 });
 
-const prescriptionSchema = new mongoose.Schema(
-  {
-    consultationId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Consultation",
-      required: true,
-    },
-    patientId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Patient",
-      required: true,
-    },
-    doctorId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    medications: [medicationSchema],
-    interactions: [{ type: String }],
-    warnings: [{ type: String }],
-    language: { type: String, enum: ["en", "ar"], default: "en" },
-  },
-  { timestamps: true },
-);
+const prescriptionSchema = new mongoose.Schema({
+  consultationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Consultation', required: true },
+  patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true },
+  doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  medications: [medicationSchema],
+  interactions: [{ type: String }],
+  warnings: [{ type: String }],
+  language: { type: String, enum: ['en', 'ar'], default: 'en' },
+}, { timestamps: true });
 
-module.exports = mongoose.model("Prescription", prescriptionSchema);
+module.exports = mongoose.model('Prescription', prescriptionSchema);

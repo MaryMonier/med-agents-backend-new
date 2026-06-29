@@ -76,14 +76,22 @@ const findOngoingMedicationConflicts = async (patientId, newMedications, exclude
 
   const conflicts = [];
   const newNames = newMedications.map((m) => m.name.trim().toLowerCase());
+  const newIngredients = newMedications
+    .map((m) => m.activeIngredient?.trim().toLowerCase())
+    .filter(Boolean);
 
   pastPrescriptions.forEach((presc) => {
     presc.medications.forEach((med) => {
       if (!isMedicationStillActive(presc.createdAt, med)) return;
-      if (!newNames.includes(med.name.trim().toLowerCase())) return;
+
+      const matchesName = newNames.includes(med.name.trim().toLowerCase());
+      const matchesIngredient =
+        med.activeIngredient && newIngredients.includes(med.activeIngredient.trim().toLowerCase());
+      if (!matchesName && !matchesIngredient) return;
 
       conflicts.push({
         name: med.name,
+        activeIngredient: med.activeIngredient || null,
         prescriptionId: presc._id,
         consultationId: presc.consultationId,
         prescribedOn: presc.createdAt,
@@ -108,6 +116,7 @@ const runQuickCheckForMedications = async (medications, patient, ongoingConflict
 
   const ongoingAsActive = ongoingConflicts.map((c) => ({
     name: c.name,
+    activeIngredient: c.activeIngredient || null,
     isChronic: c.isChronic,
   }));
 
@@ -115,12 +124,12 @@ const runQuickCheckForMedications = async (medications, patient, ongoingConflict
     medications.map(async (med, index) => {
       const otherMedsInThisPrescription = medications
         .filter((_, i) => i !== index)
-        .map((m) => ({ name: m.name }));
+        .map((m) => ({ name: m.name, activeIngredient: m.activeIngredient || null }));
 
       const activeMedications = [...otherMedsInThisPrescription, ...ongoingAsActive];
 
       const result = await runQuickDrugCheck({
-        newDrug: { name: med.name },
+        newDrug: { name: med.name, activeIngredient: med.activeIngredient || null },
         activeMedications,
         allergies,
         patientAge: age,
@@ -296,7 +305,7 @@ const createPrescription = async (req, res, next) => {
 
     const populated = await Prescription.findById(prescription._id)
       .populate("patientId", "name dateOfBirth gender allergies nationalID")
-      .populate("consultationId", "symptoms diagnosis createdAt");
+      .populate("consultationId", "symptoms diagnosis createdAt followupId");
 
     res.status(201).json({
       success: true,
@@ -532,7 +541,7 @@ const updatePrescription = async (req, res, next) => {
       { new: true, runValidators: true },
     )
       .populate("patientId", "name dateOfBirth gender allergies nationalID")
-      .populate("consultationId", "symptoms diagnosis createdAt");
+      .populate("consultationId", "symptoms diagnosis createdAt followupId");
 
     res.status(200).json({
       success: true,

@@ -43,12 +43,24 @@ const runQuickDrugCheck = async ({
 
     const lang = language === "ar" ? "Arabic" : "English";
 
-    const allDrugNames = [
-      ...activeMedications.map((m) => m.name),
+    // اسم الدواء للعرض، مع المادة الفعالة بين قوسين لو موجودة (نفس الفورمات اللي الـ prompt بيتوقعه)
+    const formatDrugLabel = (drug) =>
+      drug.activeIngredient && drug.activeIngredient.toLowerCase() !== drug.name.toLowerCase()
+        ? `${drug.name} (${drug.activeIngredient})`
+        : drug.name;
+
+    const newDrugLabel = formatDrugLabel(newDrug);
+
+    // نجمع كل الأسماء (البراند + المادة الفعالة) عشان الـ FDA lookup يلاقي بيانات
+    // التفاعلات حتى لو الـ label مكتوب بالمادة الفعالة بس
+    const fdaLookupNames = [
+      ...activeMedications.flatMap((m) => [m.name, m.activeIngredient].filter(Boolean)),
       newDrug.name,
-    ];
+      newDrug.activeIngredient,
+    ].filter(Boolean);
+
     const fdaData = await checkInteractions(
-      allDrugNames.map((name) => ({ name })),
+      fdaLookupNames.map((name) => ({ name })),
     );
 
     const fdaContext = fdaData
@@ -57,21 +69,30 @@ const runQuickDrugCheck = async ({
 
     const activeList =
       activeMedications.length > 0
-        ? activeMedications.map((m) => m.name).join(", ")
+        ? activeMedications.map(formatDrugLabel).join(", ")
         : "None";
     const allergiesList = allergies.length > 0 ? allergies.join(", ") : "None";
     const ageInfo = patientAge !== null ? `${patientAge} years old` : "Unknown";
     const genderInfo = patientGender || "Unknown";
 
-    // أدوية شغالة بالفعل وهي نفس الدواء الجديد (من روشتة سابقة لسة معداش معادها، أو من نفس الروشتة الحالية)
+    // أدوية شغالة بالفعل وهي نفس الدواء الجديد (بالاسم أو بالمادة الفعالة)،
+    // من روشتة سابقة لسة معداش معادها، أو من نفس الروشتة الحالية
+    const matchesNewDrug = (m) => {
+      const sameName = m.name.trim().toLowerCase() === newDrug.name.trim().toLowerCase();
+      const sameIngredient =
+        newDrug.activeIngredient &&
+        m.activeIngredient &&
+        m.activeIngredient.trim().toLowerCase() === newDrug.activeIngredient.trim().toLowerCase();
+      return sameName || sameIngredient;
+    };
     const duplicateNames = activeMedications
-      .filter((m) => m.name.trim().toLowerCase() === newDrug.name.trim().toLowerCase())
-      .map((m) => (m.isChronic ? `${m.name} (chronic)` : m.name));
+      .filter(matchesNewDrug)
+      .map((m) => (m.isChronic ? `${formatDrugLabel(m)} (chronic)` : formatDrugLabel(m)));
 
-    const userPrompt = `New drug being added: ${newDrug.name}
-(Note: if the drug name includes a generic/active ingredient name in parentheses, that is the active ingredient — check allergies and interactions against BOTH the brand name and the active ingredient name.)
+    const userPrompt = `New drug being added: ${newDrugLabel}
+(Note: the text in parentheses, if present, is the active ingredient — check allergies and interactions against BOTH the brand name and the active ingredient name.)
 Currently active medications (including ones still running from previous prescriptions): ${activeList}
-${duplicateNames.length > 0 ? `IMPORTANT: "${newDrug.name}" is already an active medication for this patient: ${duplicateNames.join(", ")}.` : ""}
+${duplicateNames.length > 0 ? `IMPORTANT: "${newDrugLabel}" (by name or active ingredient) is already an active medication for this patient: ${duplicateNames.join(", ")}.` : ""}
 Patient allergies: ${allergiesList}
 Patient age: ${ageInfo}
 Patient gender: ${genderInfo}
@@ -79,10 +100,10 @@ FDA interaction data:
 ${fdaContext}
 
 Check for ANY of the following:
-1. "${newDrug.name}" is already prescribed and still active (see IMPORTANT note above, if present).
-2. A dangerous interaction between "${newDrug.name}" (including its active ingredient) and any of the active medications listed above.
-3. An allergy conflict — check if the patient's allergies list contains the active ingredient or brand name of "${newDrug.name}".
-4. An age-related contraindication for "${newDrug.name}" given the patient's age and gender (for example: aspirin or any drug containing aspirin/salicylate in children/teenagers under 18 can cause Reye's syndrome).
+1. "${newDrugLabel}" is already prescribed and still active (see IMPORTANT note above, if present).
+2. A dangerous interaction between "${newDrugLabel}" (including its active ingredient) and any of the active medications listed above.
+3. An allergy conflict — check if the patient's allergies list contains the active ingredient or brand name of "${newDrugLabel}".
+4. An age-related contraindication for "${newDrugLabel}" given the patient's age and gender (for example: aspirin or any drug containing aspirin/salicylate in children/teenagers under 18 can cause Reye's syndrome).
 
 Is there any issue from the above?`;
 
