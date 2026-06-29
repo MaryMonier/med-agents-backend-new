@@ -25,6 +25,18 @@ const createConsultation = async (req, res) => {
       followupId,
     } = req.body;
 
+            const patient = await Patient.findById(patientId);
+    if (!patient) {
+      return res.status(404).json({ success: false, message: 'Patient not found' });
+    }
+
+    if (patient.createdBy.toString() !== req.user.id.toString()) {
+      await Patient.findByIdAndUpdate(patientId, {
+        $addToSet: { doctors: req.user.id }
+      });
+    }
+
+
     if (followUpDate) {
       const followUp = new Date(followUpDate);
       if (isNaN(followUp.getTime())) {
