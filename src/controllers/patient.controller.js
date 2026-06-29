@@ -2,6 +2,29 @@ const Patient = require("../models/Patient");
 const Consultation = require("../models/Consultation");
 const Prescription = require("../models/Prescription");
 
+// Build readable display fields for a structured medication, matching what
+// the frontend (PatientHistory, PrescriptionsList, PatientReport) expects:
+// dosage, frequency, duration as plain strings. Defensive: also handles
+// older documents saved before dosageAmount/frequencyCount/etc existed.
+const decorateMedicationForDisplay = (med) => {
+  if (!med) return med;
+
+  const hasStructuredDosage = med.dosageAmount !== undefined && med.dosageUnit !== undefined;
+  const hasStructuredFrequency = med.frequencyCount !== undefined && med.frequencyPeriod !== undefined;
+  const hasStructuredDuration = med.durationValue !== undefined && med.durationUnit !== undefined;
+
+  return {
+    ...med,
+    dosage: hasStructuredDosage ? `${med.dosageAmount}${med.dosageUnit}` : med.dosage || med.dose || '',
+    frequency: hasStructuredFrequency ? `${med.frequencyCount}x ${med.frequencyPeriod}` : med.frequency || '',
+    duration: med.isChronic
+      ? 'Lifelong (Chronic)'
+      : hasStructuredDuration
+        ? `${med.durationValue} ${med.durationUnit}`
+        : med.duration || '',
+  };
+};
+
 const getAllPatientsByDoctor = async (request, response) => {
   try {
     const createdBy = request.user.id;
@@ -24,8 +47,8 @@ const getAllPatientsByDoctor = async (request, response) => {
         pagination: null,
       });
     }
-    const totalPatients = await Patient.countDocuments();
-    const allPatients = await Patient.find({$or:[{ createdBy},{ doctors:createdBy}]})
+    const totalPatients = await Patient.countDocuments({ createdBy });
+    const allPatients = await Patient.find({ createdBy })
       .skip(skip)
       .limit(Number(limit));
 
@@ -249,7 +272,7 @@ const getPatientHistory = async (req, res) => {
       consultations.map(async (consultation) => {
         const prescription = await Prescription.findOne({
           consultationId: consultation._id,
-        }).select("medications interactions warnings");
+        }).select("_id medications");
 
         return {
           consultationId: consultation._id,
@@ -262,9 +285,10 @@ const getPatientHistory = async (req, res) => {
           isFollowup: !!consultation.followupId, // لو كانت من فولو أب
           prescription: prescription
             ? {
-                medications: prescription.medications,
-                interactions: prescription.interactions,
-                warnings: prescription.warnings,
+                _id: prescription._id,
+                medications: prescription.medications.map((m) =>
+                  decorateMedicationForDisplay(m.toObject ? m.toObject() : m),
+                ),
               }
             : null,
         };

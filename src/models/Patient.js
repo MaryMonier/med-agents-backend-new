@@ -8,7 +8,6 @@ const patientSchema = new mongoose.Schema({
     bloodType:{type:String, enum: ['A+','A-','B+','B-','AB+','AB-','O+','O-']},
     allergies:[{type:String}],
     chronicConditions:[{type: String}],
-      doctors: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], 
     createdBy: {type:mongoose.Schema.Types.ObjectId, ref:'User',required: true},
 },{timestamps:true}
 );

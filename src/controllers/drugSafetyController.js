@@ -1,6 +1,16 @@
 const Patient = require('../models/Patient');
 const { runDrugSafetyAgent } = require('../agents/drugSafetyAgent');
 
+const calculateAge = (dob) => {
+  if (!dob) return null;
+  const today = new Date();
+  const birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+};
+
 // & POST /api/drug-safety/check
 const checkDrugSafety = async (req, res) => {
   try {
@@ -43,7 +53,7 @@ const checkDrugSafetyForPatient = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Each medication must have at least a name' });
     }
 
-    const patient = await Patient.findById(patientId).select('name allergies chronicConditions');
+    const patient = await Patient.findById(patientId).select('name allergies chronicConditions dateOfBirth');
     if (!patient) {
       return res.status(404).json({ success: false, message: 'Patient not found' });
     }
@@ -52,6 +62,7 @@ const checkDrugSafetyForPatient = async (req, res) => {
       medications,
       allergies: patient.allergies || [],
       chronicConditions: patient.chronicConditions || [],
+      age: calculateAge(patient.dateOfBirth),
       language,
     });
 
