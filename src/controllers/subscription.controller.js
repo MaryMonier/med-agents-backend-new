@@ -99,17 +99,48 @@ const renewSubscription = async (req, res) => {
 };
 const getDoctorsSubscriptions = async (req, res) => {
   try {
+    const { search = "", page = 1, limit = 10 } = req.query;
+
+    const currentPage = Number(page);
+    const pageSize = Number(limit);
+
+    const filter = {
+      role: "doctor",
+    };
+
+    if (search) {
+      filter.$or = [
+        {
+          name: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          email: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    const totalDoctors = await User.countDocuments(filter);
+
     const doctors = await User.find(
-      { role: "doctor" },
+      filter,
       "name email specialty subscription createdAt"
-    ).sort({ createdAt: -1 });
+    )
+      .sort({ createdAt: -1 })
+      .skip((currentPage - 1) * pageSize)
+      .limit(pageSize);
 
     const doctorsWithDaysLeft = doctors.map((doctor) => {
       const subscription = doctor.subscription;
 
       let daysLeft = 0;
 
-      if (subscription?.status === "trial") {
+      if (subscription?.status === "trial" && subscription.trialEnd) {
         daysLeft = Math.max(
           0,
           Math.ceil(
@@ -119,7 +150,10 @@ const getDoctorsSubscriptions = async (req, res) => {
         );
       }
 
-      if (subscription?.status === "active" &&  subscription.subscriptionEnd) {
+      if (
+        subscription?.status === "active" &&
+        subscription.subscriptionEnd
+      ) {
         daysLeft = Math.max(
           0,
           Math.ceil(
@@ -138,6 +172,12 @@ const getDoctorsSubscriptions = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: doctorsWithDaysLeft,
+      pagination: {
+        currentPage,
+        pageSize,
+        totalDoctors,
+        totalPages: Math.ceil(totalDoctors / pageSize),
+      },
     });
   } catch (error) {
     return res.status(500).json({
@@ -146,6 +186,10 @@ const getDoctorsSubscriptions = async (req, res) => {
     });
   }
 };
+
+
+
+
 
 module.exports = {
   getMySubscription,
