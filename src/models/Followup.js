@@ -12,6 +12,11 @@ const followupSchema = new mongoose.Schema(
       ref: "Patient",
       required: true,
     },
+   doctorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+
     instructions: { type: String, required: true },
     scheduledDate: { type: Date },
     reminderSent: { type: Boolean, default: false },

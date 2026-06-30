@@ -35,6 +35,11 @@ const createFollowup = async (req, res) => {
       });
     }
 
+
+     const consultation = await Consultation.findById(consultationId).select(
+      "doctorId",
+    );
+
     const followup = await Followup.create({
       consultationId,
       patientId,

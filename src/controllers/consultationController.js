@@ -1,4 +1,5 @@
 const Consultation = require("../models/Consultation");
+const Patient = require("../models/Patient");
 const Followup = require("../models/Followup");
 const { runClinicalRecAgent } = require("../agents/clinicalRecAgent");
 
@@ -24,6 +25,20 @@ const createConsultation = async (req, res) => {
       followUpDate,
       followupId,
     } = req.body;
+
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
+      return res.status(404).json({ success: false, message: 'Patient not found' });
+    }
+
+    if (patient.createdBy.toString() !== req.user.id.toString()) {
+      await Patient.findByIdAndUpdate(patientId, {
+        $addToSet: { doctors: req.user.id }
+      });
+    }
+
+
+
 
     if (followUpDate) {
       const followUp = new Date(followUpDate);
@@ -93,6 +108,7 @@ const createConsultation = async (req, res) => {
       await Followup.create({
         consultationId: consultation._id,
         patientId,
+        doctorId: req.user.id,
         instructions: "-",
         scheduledDate: followUpDate,
         language: language || "en",
@@ -149,6 +165,31 @@ console.log(consultations);
   }
 };
 
+
+const getConsultationsByDoctorId = async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+
+    if (req.user.role !== "admin" && req.user.id !== doctorId) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own consultations.",
+      });
+    }
+
+    const consultations = await Consultation.find({ doctorId })
+      .populate("patientId", "name age")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: consultations.length,
+      data: consultations,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 const getConsultationById = async (req, res) => {
   try {
@@ -244,5 +285,6 @@ module.exports = {
   updateConsultation,
   deleteConsultation,
   getAllConsultationsByDoctor,
+  getConsultationsByDoctorId,
   getAIRecommendation
 };
