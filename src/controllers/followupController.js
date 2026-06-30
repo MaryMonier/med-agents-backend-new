@@ -101,7 +101,7 @@ const getFollowupById = async (req, res) => {
     }
 
     const followup = await Followup.findById(id)
-      .populate("patientId", "name")
+      .populate("patientId", "name allergies chronicConditions dateOfBirth gender nationalID")
       .populate({
         path: "consultationId",
         populate: { path: "doctorId", select: "name" },

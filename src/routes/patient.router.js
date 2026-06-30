@@ -5,10 +5,10 @@ const { getAllPatients,
      deletePatient, 
      getPatientHistory,
      updatePatient,
+    getPatientsByDoctorId ,
     getAllPatientsByDoctor } = require("../controllers/patient.controller")
 const adminMiddleware = require("../middleware/admin.middleware");
 const checkSubscription = require("../middleware/checkSubscription.middleware");
-
 const router = require("express").Router();
 
 
@@ -19,5 +19,8 @@ router.post("/",authMiddleware , checkSubscription,createPatient)
 router.delete("/:id",authMiddleware , checkSubscription,deletePatient)
 router.patch("/:id",authMiddleware , checkSubscription,updatePatient)
 router.get("/:id/history", authMiddleware , checkSubscription, getPatientHistory);
+
+
+router.get("/by-doctor/:doctorId",authMiddleware,getPatientsByDoctorId)
 
 module.exports = router;
