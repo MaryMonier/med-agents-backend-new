@@ -1,7 +1,8 @@
 const mongoose = require("mongoose");
 const Followup = require("../models/Followup");
-require("../models/Consultation");
+const Consultation = require("../models/Consultation");
 require("../models/Patient");
+
 const createFollowup = async (req, res) => {
   try {
     const {
@@ -35,14 +36,14 @@ const createFollowup = async (req, res) => {
       });
     }
 
-
-     const consultation = await Consultation.findById(consultationId).select(
+    const consultation = await Consultation.findById(consultationId).select(
       "doctorId",
     );
 
     const followup = await Followup.create({
       consultationId,
       patientId,
+      doctorId: consultation?.doctorId,
       instructions,
       scheduledDate,
       reminderSent,
@@ -89,6 +90,44 @@ const getFollowups = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching followups",
+      error: error.message,
+    });
+  }
+};
+
+const getFollowupsByDoctorId = async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+
+    if (req.user.role !== "admin" && req.user.id !== doctorId) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own follow-ups.",
+      });
+    }
+
+    const followups = await Followup.find({ doctorId })
+      .populate("patientId", "name")
+      .populate({
+        path: "consultationId",
+        select: "structuredNote",
+      })
+      .sort({ createdAt: -1 });
+
+    const data = followups.map((f) => ({
+      ...f.toObject(),
+      lastConsultationNote: f.consultationId?.structuredNote || null,
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: data.length,
+      data,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error fetching follow-ups for doctor",
       error: error.message,
     });
   }
@@ -205,6 +244,7 @@ const deleteFollowup = async (req, res) => {
 module.exports = {
   createFollowup,
   getFollowups,
+  getFollowupsByDoctorId,
   getFollowupById,
   updateFollowup,
   deleteFollowup,
