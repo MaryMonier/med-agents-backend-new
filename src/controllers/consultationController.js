@@ -1,6 +1,7 @@
 const Consultation = require("../models/Consultation");
 const Patient = require("../models/Patient");
 const Followup = require("../models/Followup");
+
 const { runClinicalRecAgent } = require("../agents/clinicalRecAgent");
 
 const getStartOfTodayInEgypt = () => {
@@ -14,6 +15,25 @@ const getStartOfTodayInEgypt = () => {
   return new Date(`${egyptDateStr}T00:00:00.000Z`);
 };
 
+// لو الدكتور حدد إن الدايجنوزز دي مرض مزمن، نضيفها لـ Patient.chronicConditions
+// (من غير تكرار لو هي موجودة بالفعل)
+const addDiagnosisToChronicConditions = async (patientId, diagnosis) => {
+  if (!diagnosis || !diagnosis.trim()) return;
+  const trimmed = diagnosis.trim();
+
+  const patient = await Patient.findById(patientId).select("chronicConditions");
+  if (!patient) return;
+
+  const alreadyExists = (patient.chronicConditions || []).some(
+    (c) => c.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (alreadyExists) return;
+
+  await Patient.findByIdAndUpdate(patientId, {
+    $push: { chronicConditions: trimmed },
+  });
+};
+
 const createConsultation = async (req, res) => {
   try {
     const {
@@ -24,6 +44,7 @@ const createConsultation = async (req, res) => {
       language,
       followUpDate,
       followupId,
+      isChronic,
     } = req.body;
 
     const patient = await Patient.findById(patientId);
@@ -36,8 +57,6 @@ const createConsultation = async (req, res) => {
         $addToSet: { doctors: req.user.id }
       });
     }
-
-
 
 
     if (followUpDate) {
@@ -86,11 +105,16 @@ const createConsultation = async (req, res) => {
       structuredNote: agentResult.structuredNote,
       suggestedSpecialist: agentResult.suggestedSpecialist,
       urgencyLevel: agentResult.urgencyLevel,
+      isChronic: !!isChronic,
       language: language || "en",
       status: "completed",
       followUpDate: followUpDate || undefined,
       followupId: followupId || null,
     });
+
+    if (isChronic) {
+      await addDiagnosisToChronicConditions(patientId, diagnosis);
+    }
 
     // لو الكونسلتيشن دي من فولو أب → غير status الفولو أب لـ confirmed
     // وحدّث الـ instructions بالـ structuredNote الجديدة
@@ -125,8 +149,6 @@ const createConsultation = async (req, res) => {
   }
 };
 
-
-
 const getAllConsultations = async (req, res) => {
   try {
     const consultations = await Consultation.find({})
@@ -144,16 +166,15 @@ const getAllConsultations = async (req, res) => {
 };
 
 const getAllConsultationsByDoctor = async (req, res) => {
-  console.log(req.user);
-  
-
   try {
+    // الكونسلتيشن اللي جاية من فولو أب (followupId موجود) مش بتظهر هنا،
+    // دي بتظهر بس في صفحة Follow-ups تحت تاب Completed، وفي Patient History
     const consultations = await Consultation.find({
       doctorId: req.user.id,
+      followupId: null,
     })
       .populate("patientId", "name age")
       .sort({ createdAt: -1 });
-console.log(consultations);
 
     res.status(200).json({
       success: true,
@@ -191,6 +212,7 @@ const getConsultationsByDoctorId = async (req, res) => {
   }
 };
 
+
 const getConsultationById = async (req, res) => {
   try {
     const consultation = await Consultation.findById(req.params.id).populate(
@@ -220,12 +242,19 @@ const updateConsultation = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Consultation not found" });
     }
+
+    if (req.body.isChronic) {
+      await addDiagnosisToChronicConditions(
+        consultation.patientId,
+        req.body.diagnosis ?? consultation.diagnosis,
+      );
+    }
+
     res.status(200).json({ success: true, data: consultation });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 const deleteConsultation = async (req, res) => {
   try {
@@ -236,7 +265,6 @@ const deleteConsultation = async (req, res) => {
         .json({ success: false, message: "Consultation not found" });
     }
 
-    
     await Followup.deleteMany({ consultationId: consultation._id });
 
     await consultation.deleteOne();
@@ -252,12 +280,7 @@ const deleteConsultation = async (req, res) => {
 
 const getAIRecommendation = async (req, res) => {
   try {
-    const {
-      symptoms,
-      diagnosis,
-      rawInput,
-      language,
-    } = req.body;
+    const { symptoms, diagnosis, rawInput, language } = req.body;
 
     const agentResult = await runClinicalRecAgent({
       rawInput,
@@ -270,7 +293,6 @@ const getAIRecommendation = async (req, res) => {
       success: true,
       data: agentResult,
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -285,6 +307,11 @@ module.exports = {
   updateConsultation,
   deleteConsultation,
   getAllConsultationsByDoctor,
+
   getConsultationsByDoctorId,
-  getAIRecommendation
+  getAIRecommendation,
+
 };
+
+
+

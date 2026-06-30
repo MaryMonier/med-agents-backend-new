@@ -9,6 +9,8 @@ const patientSchema = new mongoose.Schema({
     allergies:[{type:String}],
     chronicConditions:[{type: String}],
     createdBy: {type:mongoose.Schema.Types.ObjectId, ref:'User',required: true},
+          doctors: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], 
+
 },{timestamps:true}
 );
 module.exports = mongoose.model('Patient',patientSchema);

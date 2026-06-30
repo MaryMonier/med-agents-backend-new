@@ -22,6 +22,8 @@ const consultationSchema = new mongoose.Schema(
 
     },
     suggestedSpecialist: { type: String },
+    // لو الدكتور حدد إن الدايجنوزز دي مرض مزمن، بنضيفها لـ Patient.chronicConditions
+    isChronic: { type: Boolean, default: false },
     status: {
       type: String,
       enum: ["pending", "completed"],
