@@ -21,13 +21,23 @@ const getStartOfTodayInEgypt = () => {
 const addDiagnosisToChronicConditions = async (patientId, diagnosis) => {
   if (!diagnosis || !diagnosis.trim()) return;
   const trimmed = diagnosis.trim();
+  const normalize = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalizedNew = normalize(trimmed);
 
   const patient = await Patient.findById(patientId).select("chronicConditions");
   if (!patient) return;
 
-  const alreadyExists = (patient.chronicConditions || []).some(
-    (c) => c.trim().toLowerCase() === trimmed.toLowerCase(),
-  );
+  // مش بس exact match — بنشيك كمان لو التشخيص الجديد جزء من حالة مسجلة
+  // بالفعل أو العكس (زي "Diabetes" الموجودة و"Type 2 Diabetes" الجديدة)
+  // عشان مانضيفش نفس المرض تاني بصياغة مختلفة شوية
+  const alreadyExists = (patient.chronicConditions || []).some((c) => {
+    const normalizedExisting = normalize(c);
+    return (
+      normalizedExisting === normalizedNew ||
+      normalizedExisting.includes(normalizedNew) ||
+      normalizedNew.includes(normalizedExisting)
+    );
+  });
   if (alreadyExists) return;
 
   await Patient.findByIdAndUpdate(patientId, {
@@ -269,38 +279,42 @@ const deleteConsultation = async (req, res) => {
         .json({ success: false, message: "Consultation not found" });
     }
 
-    // لما الكونسلتيشن تتمسح، لازم نلغي معاها أي فولو أب مرتبطة بيها —
-    // سواء كانت الكونسلتيشن دي هي اللي جدولت الفولو أب (consultationId)
-    // أو هي زيارة الإكمال بتاعتها (completionConsultationId) — وكمان
-    // نلغي أي بريسكربشن مرتبطة بزيارة الإكمال دي عشان مايفضلش بيانات يتيمة
-    const relatedFollowups = await Followup.find({
-      $or: [
-        { consultationId: consultation._id },
-        { completionConsultationId: consultation._id },
-      ],
-    });
+    const patientId = consultation.patientId;
 
-    for (const followup of relatedFollowups) {
-      if (
-        followup.completionConsultationId &&
-        String(followup.completionConsultationId) !== String(consultation._id)
-      ) {
-        await Prescription.deleteMany({ consultationId: followup.completionConsultationId });
+    // امسح البريسكربشن المرتبطة بالكونسلتيشن دي مباشرة، وبعدين امسح
+    // الكونسلتيشن نفسها
+    await Prescription.deleteMany({ consultationId: consultation._id });
+    await consultation.deleteOne();
+
+    // تنضيف شامل لكل فولو أبات نفس المريض: كل فولو أب بيتحدد صلاحيتها
+    // بمرجع واحد بس حسب حالتها —
+    // • لو confirmed (يعني اتكملت): المرجع الصحيح هو completionConsultationId
+    //   (زيارة الإكمال الفعلية)، مش الكونسلتيشن الأصلية اللي جدولتها
+    // • لو لسه pending: المرجع هو consultationId (الكونسلتيشن اللي جدولتها)
+    // لو المرجع بتاعها بقى مش موجود في الداتا بيز (زي الكونسلتيشن اللي
+    // اتمسحت دلوقتي)، الفولو أب دي بقت يتيمة وبتتمسح خالص من غير ما ترجع
+    // pending أو تفضل معلقة
+    const patientFollowups = await Followup.find({ patientId });
+
+    for (const followup of patientFollowups) {
+      const refToCheck =
+        followup.status === "confirmed" && followup.completionConsultationId
+          ? followup.completionConsultationId
+          : followup.consultationId;
+
+      const stillExists = refToCheck
+        ? await Consultation.exists({ _id: refToCheck })
+        : false;
+
+      if (!stillExists) {
+        if (followup.completionConsultationId) {
+          await Prescription.deleteMany({
+            consultationId: followup.completionConsultationId,
+          });
+        }
+        await Followup.findByIdAndDelete(followup._id);
       }
     }
-
-    await Followup.deleteMany({
-      _id: { $in: relatedFollowups.map((f) => f._id) },
-    });
-
-    // fallback إضافي للفولو أبات القديمة اللي اتعملت قبل إضافة completionConsultationId
-    if (consultation.followupId) {
-      await Followup.findByIdAndDelete(consultation.followupId);
-    }
-
-    await Prescription.deleteMany({ consultationId: consultation._id });
-
-    await consultation.deleteOne();
 
     res.status(200).json({
       success: true,
