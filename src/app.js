@@ -3,23 +3,16 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const errorHandler = require("./middleware/errorHandler");
-// const piiSanitize = require('./middleware/piiSanitize');
-// const authRoutes = require('./routes/auth.routes');
 const patientRouter = require("./routes/patient.router");
-// const errorHandler = require('./middleware/errorHandler');
 const piiSanitize = require("./middleware/piiSanitize");
 const authRoutes = require("./routes/auth.routes");
 const followupRoutes = require("./routes/followupRoutes");
 const prescriptionRoutes = require("./routes/prescriptionRoutes");
-// const patientRouter = require('./patient/patient.router');
 const consultationRoutes = require("./routes/consultationRoutes");
 const drugSafetyRoutes = require("./routes/drugSafetyRoutes");
 const quickDrugCheckRoutes = require("./routes/quickDrugCheckRoutes");
-
-// const patientRouter = require("./patient/patient.router")
-// const medicalAgentRouter = require('./routes/medicalAgentRoutes');
-
 const followupAgentRouter = require("./routes/followupAgentRoutes");
+const contactRouter = require("./routes/contact.routes");
 
 const app = express();
 
@@ -45,10 +38,11 @@ app.use("/api/patient", patientRouter);
 app.use("/api/followups", followupRoutes);
 app.use("/api/prescriptions", prescriptionRoutes);
 app.use("/api/patients", patientRouter);
+app.use("/api/contact", contactRouter);
 app.use("/api/drug-safety", drugSafetyRoutes);
 
 app.use("/api/consultations", consultationRoutes);
-// app.use('/api/agent', medicalAgentRouter);
+
 
 app.use("/api/medical-agent", medicalAgentRouter);
 
