@@ -1,6 +1,7 @@
 const Consultation = require("../models/Consultation");
 const Patient = require("../models/Patient");
 const Followup = require("../models/Followup");
+const Prescription = require("../models/Prescription");
 
 const { runClinicalRecAgent } = require("../agents/clinicalRecAgent");
 
@@ -49,15 +50,16 @@ const createConsultation = async (req, res) => {
 
     const patient = await Patient.findById(patientId);
     if (!patient) {
-      return res.status(404).json({ success: false, message: 'Patient not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Patient not found" });
     }
 
     if (patient.createdBy.toString() !== req.user.id.toString()) {
       await Patient.findByIdAndUpdate(patientId, {
-        $addToSet: { doctors: req.user.id }
+        $addToSet: { doctors: req.user.id },
       });
     }
-
 
     if (followUpDate) {
       const followUp = new Date(followUpDate);
@@ -116,13 +118,17 @@ const createConsultation = async (req, res) => {
       await addDiagnosisToChronicConditions(patientId, diagnosis);
     }
 
-    // لو الكونسلتيشن دي من فولو أب → غير status الفولو أب لـ confirmed
-    // وحدّث الـ instructions بالـ structuredNote الجديدة
+    // لو الكونسلتيشن دي من فولو أب → غير status الفولو أب لـ confirmed،
+    // حدّث الـ instructions بالـ structuredNote الجديدة، واربط
+    // completionConsultationId بزيارة الإكمال دي (من غير ما نلمس
+    // consultationId الأصلية) عشان نقدر نرجع للزيارة الأصلية ولزيارة
+    // الإكمال الاتنين وقت اللزوم (تعديل، حذف، عرض تفاصيل)
     if (followupId) {
       await Followup.findByIdAndUpdate(followupId, {
         $set: {
           status: "confirmed",
           instructions: agentResult.structuredNote || rawInput,
+          completionConsultationId: consultation._id,
         },
       });
     }
@@ -186,7 +192,6 @@ const getAllConsultationsByDoctor = async (req, res) => {
   }
 };
 
-
 const getConsultationsByDoctorId = async (req, res) => {
   try {
     const { doctorId } = req.params;
@@ -211,7 +216,6 @@ const getConsultationsByDoctorId = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 const getConsultationById = async (req, res) => {
   try {
@@ -265,13 +269,43 @@ const deleteConsultation = async (req, res) => {
         .json({ success: false, message: "Consultation not found" });
     }
 
-    await Followup.deleteMany({ consultationId: consultation._id });
+    // لما الكونسلتيشن تتمسح، لازم نلغي معاها أي فولو أب مرتبطة بيها —
+    // سواء كانت الكونسلتيشن دي هي اللي جدولت الفولو أب (consultationId)
+    // أو هي زيارة الإكمال بتاعتها (completionConsultationId) — وكمان
+    // نلغي أي بريسكربشن مرتبطة بزيارة الإكمال دي عشان مايفضلش بيانات يتيمة
+    const relatedFollowups = await Followup.find({
+      $or: [
+        { consultationId: consultation._id },
+        { completionConsultationId: consultation._id },
+      ],
+    });
+
+    for (const followup of relatedFollowups) {
+      if (
+        followup.completionConsultationId &&
+        String(followup.completionConsultationId) !== String(consultation._id)
+      ) {
+        await Prescription.deleteMany({ consultationId: followup.completionConsultationId });
+      }
+    }
+
+    await Followup.deleteMany({
+      _id: { $in: relatedFollowups.map((f) => f._id) },
+    });
+
+    // fallback إضافي للفولو أبات القديمة اللي اتعملت قبل إضافة completionConsultationId
+    if (consultation.followupId) {
+      await Followup.findByIdAndDelete(consultation.followupId);
+    }
+
+    await Prescription.deleteMany({ consultationId: consultation._id });
 
     await consultation.deleteOne();
 
     res.status(200).json({
       success: true,
-      message: "Consultation and related follow-ups deleted successfully",
+      message:
+        "Consultation and related follow-ups/prescriptions deleted successfully",
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -310,8 +344,4 @@ module.exports = {
 
   getConsultationsByDoctorId,
   getAIRecommendation,
-
 };
-
-
-

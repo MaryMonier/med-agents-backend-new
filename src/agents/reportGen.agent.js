@@ -53,7 +53,8 @@ const reportGenAgent = async ({ consultation, prescription, language = 'en' }) =
 
     const result = await chatCompletion({ systemPrompt, userMessage });
     const cleaned = result.content.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
 
     return { success: true, data: parsed };
 

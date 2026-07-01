@@ -5,8 +5,13 @@ const { OPENAI_API_KEY, GROQ_API_KEY } = require('../config/env');
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
-const chatCompletion = async ({ systemPrompt, userMessage }) => {
+const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) => {
   const startTime = Date.now();
+
+  // jsonMode بيفرض على الموديل إنه يرجّع JSON صالح فعلاً (مش بس نطلب منه في
+  // البرومبت) — ده بيقفل غالبية حالات الفشل اللي كانت بتحصل لما الموديل
+  // (خصوصًا Groq) يضيف كلام زيادة قبل/بعد الـ JSON أو يرجّع شكل ملخبط
+  const responseFormat = jsonMode ? { type: 'json_object' } : undefined;
 
   // OpenAI أول، لو فشلت → Groq
   try {
@@ -18,6 +23,7 @@ const chatCompletion = async ({ systemPrompt, userMessage }) => {
           { role: 'user', content: userMessage }
         ],
         temperature: 0.3,
+        ...(responseFormat ? { response_format: responseFormat } : {}),
       });
       return {
         content: response.choices[0].message.content,
@@ -38,6 +44,7 @@ const chatCompletion = async ({ systemPrompt, userMessage }) => {
       { role: 'user', content: userMessage }
     ],
     temperature: 0.3,
+    ...(responseFormat ? { response_format: responseFormat } : {}),
   });
 
   return {
