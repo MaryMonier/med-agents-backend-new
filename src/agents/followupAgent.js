@@ -6,6 +6,8 @@ const Consultation = require('../models/Consultation');
 const Patient = require('../models/Patient');
 const Prescription = require('../models/Prescription');
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const runFollowupAgent = async ({
   patientSummary = '',
   consultationSummary = '',
@@ -19,13 +21,15 @@ const runFollowupAgent = async ({
       ? medications.join(', ')
       : 'Not specified';
 
+  let context = '';
   try {
-    // const ragDocs = await retrieve(consultationSummary, language);
-   const ragDocs = await retrieve(consultationSummary, language, 3);
-    const context = formatContext(ragDocs, language);
+    const ragDocs = await retrieve(consultationSummary, language, 3);
+    context = formatContext(ragDocs, language);
+  } catch (ragError) {
+    console.error('RAG retrieval failed, continuing without context:', ragError.message);
+  }
 
-    const result = await chatCompletion({
-      systemPrompt: `
+  const systemPrompt = `
 You are a follow-up assistant for licensed doctors.
 Use these medical guidelines: ${context}
 
@@ -33,8 +37,9 @@ STRICT RULES:
 - Respond ONLY in ${language === 'ar' ? 'Arabic' : 'English'}
 - Output ONLY valid JSON
 - Focus only on follow-up instructions, monitoring, red flags
-      `,
-      userMessage: `
+      `;
+
+  const userMessage = `
 Patient Summary: ${patientSummary}
 Consultation Summary: ${consultationSummary}
 Diagnosis: ${diagnosis || 'Not specified'}
@@ -49,33 +54,46 @@ Return JSON:
   "reminderMessage": "...",
   "patientFriendlySummary": "..."
 }
-      `,
-    });
+      `;
 
-    const cleaned = result.content.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+  // نفس فكرة الـ clinicalRecAgent: نعيد المحاولة لحد 3 مرات قبل ما نرجّع فولباك
+  const MAX_ATTEMPTS = 3;
+  let lastError;
 
-    return {
-      success: true,
-      data: parsed,
-      meta: { tokensUsed: result.tokensUsed, latencyMs: result.latencyMs },
-    };
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const result = await chatCompletion({ systemPrompt, userMessage });
+      const cleaned = result.content.replace(/```json|```/g, '').trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
 
-  } catch (error) {
-    console.error('Followup Agent Error:', error);
-    return {
-      success: false,
-      error: true,
-      message: 'Followup agent failed',
-      fallback: {
-        followupInstructions: 'Unable to generate follow-up instructions.',
-        recommendedFollowupDate: 'Based on doctor assessment',
-        redFlags: [],
-        reminderMessage: 'Please follow your doctor instructions.',
-        patientFriendlySummary: 'Please contact the doctor if symptoms worsen.',
-      },
-    };
+      return {
+        success: true,
+        data: parsed,
+        meta: { tokensUsed: result.tokensUsed, latencyMs: result.latencyMs },
+      };
+    } catch (error) {
+      lastError = error;
+      console.error(`Followup Agent Error (attempt ${attempt}/${MAX_ATTEMPTS}):`, error.message);
+      if (attempt < MAX_ATTEMPTS) {
+        await delay(700 * attempt);
+      }
+    }
   }
+
+  console.error('Followup Agent Error: all attempts failed:', lastError?.message);
+  return {
+    success: false,
+    error: true,
+    message: 'Followup agent failed',
+    fallback: {
+      followupInstructions: 'Unable to generate follow-up instructions.',
+      recommendedFollowupDate: 'Based on doctor assessment',
+      redFlags: [],
+      reminderMessage: 'Please follow your doctor instructions.',
+      patientFriendlySummary: 'Please contact the doctor if symptoms worsen.',
+    },
+  };
 };
 
 const generateFollowupPlan = async (req, res, next) => {
