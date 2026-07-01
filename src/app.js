@@ -6,6 +6,7 @@ const errorHandler = require("./middleware/errorHandler");
 // const piiSanitize = require('./middleware/piiSanitize');
 // const authRoutes = require('./routes/auth.routes');
 const patientRouter = require("./routes/patient.router");
+const contactRouter = require("./routes/contact.routes");
 // const errorHandler = require('./middleware/errorHandler');
 const piiSanitize = require("./middleware/piiSanitize");
 const authRoutes = require("./routes/auth.routes");
@@ -16,7 +17,7 @@ const consultationRoutes = require("./routes/consultationRoutes");
 const drugSafetyRoutes = require("./routes/drugSafetyRoutes");
 const quickDrugCheckRoutes = require("./routes/quickDrugCheckRoutes");
 const subscriptionRoutes = require("./routes/subscription.router");
-
+const paymentRoutes = require("./routes/payment.routes");
 // const patientRouter = require("./patient/patient.router")
 // const medicalAgentRouter = require('./routes/medicalAgentRoutes');
 
@@ -46,13 +47,14 @@ app.use("/api/patient", patientRouter);
 app.use("/api/followups", followupRoutes);
 app.use("/api/prescriptions", prescriptionRoutes);
 app.use("/api/patients", patientRouter);
+app.use("/api/contact", contactRouter);
 app.use("/api/drug-safety", drugSafetyRoutes);
 
 app.use("/api/consultations", consultationRoutes);
 // app.use('/api/agent', medicalAgentRouter);
 
 app.use("/api/medical-agent", medicalAgentRouter);
-
+app.use("/api/payment", paymentRoutes);
 app.use("/api/followup-agent", followupAgentRouter);
 app.use("/api/drug-safety", quickDrugCheckRoutes);
 app.use("/api/subscription", subscriptionRoutes);
