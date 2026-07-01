@@ -12,6 +12,7 @@ const consultationRoutes = require("./routes/consultationRoutes");
 const drugSafetyRoutes = require("./routes/drugSafetyRoutes");
 const quickDrugCheckRoutes = require("./routes/quickDrugCheckRoutes");
 const followupAgentRouter = require("./routes/followupAgentRoutes");
+const contactRouter = require("./routes/contact.routes");
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use("/api/patient", patientRouter);
 app.use("/api/followups", followupRoutes);
 app.use("/api/prescriptions", prescriptionRoutes);
 app.use("/api/patients", patientRouter);
+app.use("/api/contact", contactRouter);
 app.use("/api/drug-safety", drugSafetyRoutes);
 
 app.use("/api/consultations", consultationRoutes);
