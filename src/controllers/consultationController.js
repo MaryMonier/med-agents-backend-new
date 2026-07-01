@@ -118,13 +118,17 @@ const createConsultation = async (req, res) => {
       await addDiagnosisToChronicConditions(patientId, diagnosis);
     }
 
-    // لو الكونسلتيشن دي من فولو أب → غير status الفولو أب لـ confirmed
-    // وحدّث الـ instructions بالـ structuredNote الجديدة
+    // لو الكونسلتيشن دي من فولو أب → غير status الفولو أب لـ confirmed،
+    // حدّث الـ instructions بالـ structuredNote الجديدة، واربط
+    // completionConsultationId بزيارة الإكمال دي (من غير ما نلمس
+    // consultationId الأصلية) عشان نقدر نرجع للزيارة الأصلية ولزيارة
+    // الإكمال الاتنين وقت اللزوم (تعديل، حذف، عرض تفاصيل)
     if (followupId) {
       await Followup.findByIdAndUpdate(followupId, {
         $set: {
           status: "confirmed",
           instructions: agentResult.structuredNote || rawInput,
+          completionConsultationId: consultation._id,
         },
       });
     }
@@ -265,9 +269,35 @@ const deleteConsultation = async (req, res) => {
         .json({ success: false, message: "Consultation not found" });
     }
 
-    // لما الكونسلتيشن تتمسح، لازم نلغي معاها الفولو أب والروشتة المرتبطين
-    // بيها كمان عشان مايفضلش بيانات يتيمة مربوطة بكونسلتيشن مش موجودة
-    await Followup.deleteMany({ consultationId: consultation._id });
+    // لما الكونسلتيشن تتمسح، لازم نلغي معاها أي فولو أب مرتبطة بيها —
+    // سواء كانت الكونسلتيشن دي هي اللي جدولت الفولو أب (consultationId)
+    // أو هي زيارة الإكمال بتاعتها (completionConsultationId) — وكمان
+    // نلغي أي بريسكربشن مرتبطة بزيارة الإكمال دي عشان مايفضلش بيانات يتيمة
+    const relatedFollowups = await Followup.find({
+      $or: [
+        { consultationId: consultation._id },
+        { completionConsultationId: consultation._id },
+      ],
+    });
+
+    for (const followup of relatedFollowups) {
+      if (
+        followup.completionConsultationId &&
+        String(followup.completionConsultationId) !== String(consultation._id)
+      ) {
+        await Prescription.deleteMany({ consultationId: followup.completionConsultationId });
+      }
+    }
+
+    await Followup.deleteMany({
+      _id: { $in: relatedFollowups.map((f) => f._id) },
+    });
+
+    // fallback إضافي للفولو أبات القديمة اللي اتعملت قبل إضافة completionConsultationId
+    if (consultation.followupId) {
+      await Followup.findByIdAndDelete(consultation.followupId);
+    }
+
     await Prescription.deleteMany({ consultationId: consultation._id });
 
     await consultation.deleteOne();

@@ -74,11 +74,19 @@ const getFollowups = async (req, res) => {
         select: "doctorId structuredNote",
         populate: { path: "doctorId", select: "name" },
       })
+      .populate({
+        path: "completionConsultationId",
+        select: "doctorId structuredNote",
+        populate: { path: "doctorId", select: "name" },
+      })
       .sort({ createdAt: -1 });
 
     const data = followups.map((f) => ({
       ...f.toObject(),
-      lastConsultationNote: f.consultationId?.structuredNote || null,
+      lastConsultationNote:
+        f.completionConsultationId?.structuredNote ||
+        f.consultationId?.structuredNote ||
+        null,
     }));
 
     res.status(200).json({
@@ -112,11 +120,18 @@ const getFollowupsByDoctorId = async (req, res) => {
         path: "consultationId",
         select: "structuredNote",
       })
+      .populate({
+        path: "completionConsultationId",
+        select: "structuredNote",
+      })
       .sort({ createdAt: -1 });
 
     const data = followups.map((f) => ({
       ...f.toObject(),
-      lastConsultationNote: f.consultationId?.structuredNote || null,
+      lastConsultationNote:
+        f.completionConsultationId?.structuredNote ||
+        f.consultationId?.structuredNote ||
+        null,
     }));
 
     res.status(200).json({
@@ -148,6 +163,10 @@ const getFollowupById = async (req, res) => {
       .populate("patientId", "name allergies chronicConditions dateOfBirth gender nationalID")
       .populate({
         path: "consultationId",
+        populate: { path: "doctorId", select: "name" },
+      })
+      .populate({
+        path: "completionConsultationId",
         populate: { path: "doctorId", select: "name" },
       });
 
