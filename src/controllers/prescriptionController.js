@@ -111,37 +111,44 @@ const findOngoingMedicationConflicts = async (patientId, newMedications, exclude
 // prescriptions (the "ongoing conflict" case is folded into this single
 // message instead of being a separate warning), plus allergies and age.
 const runQuickCheckForMedications = async (medications, patient, ongoingConflicts = []) => {
-  const age = calculateAge(patient?.dateOfBirth);
-  const allergies = patient?.allergies || [];
+  try {
+    const age = calculateAge(patient?.dateOfBirth);
+    const allergies = patient?.allergies || [];
 
-  const ongoingAsActive = ongoingConflicts.map((c) => ({
-    name: c.name,
-    activeIngredient: c.activeIngredient || null,
-    isChronic: c.isChronic,
-  }));
+    const ongoingAsActive = ongoingConflicts.map((c) => ({
+      name: c.name,
+      activeIngredient: c.activeIngredient || null,
+      isChronic: c.isChronic,
+    }));
 
-  const results = await Promise.all(
-    medications.map(async (med, index) => {
-      const otherMedsInThisPrescription = medications
-        .filter((_, i) => i !== index)
-        .map((m) => ({ name: m.name, activeIngredient: m.activeIngredient || null }));
+    const results = await Promise.all(
+      medications.map(async (med, index) => {
+        const otherMedsInThisPrescription = medications
+          .filter((_, i) => i !== index)
+          .map((m) => ({ name: m.name, activeIngredient: m.activeIngredient || null }));
 
-      const activeMedications = [...otherMedsInThisPrescription, ...ongoingAsActive];
+        const activeMedications = [...otherMedsInThisPrescription, ...ongoingAsActive];
 
-      const result = await runQuickDrugCheck({
-        newDrug: { name: med.name, activeIngredient: med.activeIngredient || null },
-        activeMedications,
-        allergies,
-        patientAge: age,
-        patientGender: patient?.gender || null,
-        language: "en",
-      });
+        const result = await runQuickDrugCheck({
+          newDrug: { name: med.name, activeIngredient: med.activeIngredient || null },
+          activeMedications,
+          allergies,
+          patientAge: age,
+          patientGender: patient?.gender || null,
+          language: "en",
+        });
 
-      return result?.success ? result.data?.message || null : null;
-    }),
-  );
+        return result?.success ? result.data?.message || null : null;
+      }),
+    );
 
-  return medications.map((med, i) => ({ ...med, quickCheckMessage: results[i] }));
+    return medications.map((med, i) => ({ ...med, quickCheckMessage: results[i] }));
+  } catch (error) {
+    // مهما حصل هنا، السيف الفعلي بتاع الروشتة (الجرعة/التكرار/المدة) أهم
+    // من رسالة الـ quick check — فمنسيبش الإكسبشن يوقف عملية الحفظ خالص
+    console.error("Quick check pass failed, saving medications without check messages:", error.message);
+    return medications.map((med) => ({ ...med, quickCheckMessage: null }));
+  }
 };
 
 // ─── Search Drugs from FDA (for autocomplete dropdown) ───────────────────────
