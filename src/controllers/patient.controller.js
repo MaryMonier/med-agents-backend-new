@@ -268,6 +268,11 @@ const getPatientHistory = async (req, res) => {
       )
       .sort({ createdAt: -1 });
 
+    console.log(
+      `[getPatientHistory] patientId=${patientId} found ${consultations.length} consultations, ` +
+        `first diagnosis="${consultations[0]?.diagnosis}"`,
+    );
+
     const history = await Promise.all(
       consultations.map(async (consultation) => {
         const prescription = await Prescription.findOne({

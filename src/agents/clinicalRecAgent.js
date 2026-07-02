@@ -82,6 +82,9 @@ Return JSON only:
     } catch (error) {
       lastError = error;
       console.error(`AI Error (attempt ${attempt}/${MAX_ATTEMPTS}):`, error.message);
+      // لو الخطأ بسبب rate limit، إعادة المحاولة خلال ثواني مش هتنفع
+      // (الموديل هيرفض تاني بنفس السبب) — نوقف على طول ونبلّغ بوضوح
+      if (error.isRateLimit) break;
       if (attempt < MAX_ATTEMPTS) {
         await delay(700 * attempt);
       }
@@ -90,7 +93,11 @@ Return JSON only:
 
   // كل المحاولات فشلت فعلاً → نرمي الخطأ عشان الكنترولر يرجّع إيرور حقيقي
   // (مش fallback مزيف) فالـ retry اللي في الفرونت إند يقدر يتصرف صح
-  throw new Error(lastError?.message || "AI request failed after multiple attempts");
+  const finalError = new Error(
+    lastError?.message || "AI request failed after multiple attempts",
+  );
+  if (lastError?.isRateLimit) finalError.isRateLimit = true;
+  throw finalError;
 };
 
 module.exports = { runClinicalRecAgent };

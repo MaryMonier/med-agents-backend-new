@@ -10,6 +10,14 @@ const groqClient = new Groq({ apiKey: GROQ_API_KEY });
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const isRateLimitError = (err) => {
+  return (
+    err?.status === 429 ||
+    err?.error?.code === "rate_limit_exceeded" ||
+    /rate limit/i.test(err?.message || "")
+  );
+};
+
 const callLLM = async (params) => {
   // زي باقي الـ agents بالظبط: نتأكد إن OpenAI client فعلاً موجود قبل
   // ما نحاول نستخدمه، بدل ما نعتمد على إنه يرمي إكسبشن ونمسكها بالصدفة
@@ -146,6 +154,7 @@ STRICT RULES:
         } catch (err) {
           lastError = err;
           console.error(`Quick Drug Check LLM error (attempt ${attempt}/${MAX_ATTEMPTS}):`, err.message);
+          if (isRateLimitError(err)) break;
           if (attempt < MAX_ATTEMPTS) await delay(500);
         }
       }

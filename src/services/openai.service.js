@@ -5,6 +5,17 @@ const { OPENAI_API_KEY, GROQ_API_KEY } = require('../config/env');
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
+// بنكتشف تحديدًا لو الخطأ ده بسبب rate limit (429) — سواء من OpenAI أو Groq —
+// عشان الكولر يقدر يتصرف بحكمة (يوقف الـ retry فورًا بدل ما يحاول تاني في
+// نفس الدقيقة وهيفشل بنفس الطريقة، ويورّي رسالة واضحة للدكتور بدل الـ JSON الخام)
+const isRateLimitError = (err) => {
+  return (
+    err?.status === 429 ||
+    err?.error?.code === 'rate_limit_exceeded' ||
+    /rate limit/i.test(err?.message || '')
+  );
+};
+
 const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) => {
   const startTime = Date.now();
 
@@ -37,22 +48,33 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
   }
 
   // Groq fallback
-  const response = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage }
-    ],
-    temperature: 0.3,
-    ...(responseFormat ? { response_format: responseFormat } : {}),
-  });
+  try {
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ],
+      temperature: 0.3,
+      ...(responseFormat ? { response_format: responseFormat } : {}),
+    });
 
-  return {
-    content: response.choices[0].message.content,
-    tokensUsed: response.usage.total_tokens,
-    costUSD: 0,
-    latencyMs: Date.now() - startTime,
-  };
+    return {
+      content: response.choices[0].message.content,
+      tokensUsed: response.usage.total_tokens,
+      costUSD: 0,
+      latencyMs: Date.now() - startTime,
+    };
+  } catch (err) {
+    if (isRateLimitError(err)) {
+      const cleanError = new Error(
+        "You've reached your plan's daily limit for AI-powered recommendations. Please upgrade your subscription to continue using this feature.",
+      );
+      cleanError.isRateLimit = true;
+      throw cleanError;
+    }
+    throw err;
+  }
 };
 
 const streamCompletion = async ({ systemPrompt, userMessage, res }) => {

@@ -56,6 +56,12 @@ const createConsultation = async (req, res) => {
       followUpDate,
       followupId,
       isChronic,
+      // القيم دي جاية من خطوة "Get AI Recommendation" اللي حصلت قبل كده على
+      // طول (مش بنعمل نداء تاني للـ AI هنا) — عشان الحفظ نفسه يشتغل حتى لو
+      // مفيش توكينز، ومايبقاش فيه اعتماد على الـ AI في لحظة الحفظ خالص
+      structuredNote,
+      suggestedSpecialist,
+      urgencyLevel,
     } = req.body;
 
     const patient = await Patient.findById(patientId);
@@ -101,22 +107,15 @@ const createConsultation = async (req, res) => {
       }
     }
 
-    const agentResult = await runClinicalRecAgent({
-      rawInput,
-      symptoms,
-      diagnosis,
-      language: language || "en",
-    });
-
     const consultation = await Consultation.create({
       patientId,
       doctorId: req.user.id,
       symptoms,
       diagnosis,
       rawInput,
-      structuredNote: agentResult.structuredNote,
-      suggestedSpecialist: agentResult.suggestedSpecialist,
-      urgencyLevel: agentResult.urgencyLevel,
+      structuredNote: structuredNote || rawInput,
+      suggestedSpecialist: suggestedSpecialist || null,
+      urgencyLevel: urgencyLevel || "unknown",
       isChronic: !!isChronic,
       language: language || "en",
       status: "completed",
@@ -137,7 +136,7 @@ const createConsultation = async (req, res) => {
       await Followup.findByIdAndUpdate(followupId, {
         $set: {
           status: "confirmed",
-          instructions: agentResult.structuredNote || rawInput,
+          instructions: consultation.structuredNote || rawInput,
           completionConsultationId: consultation._id,
         },
       });
@@ -161,7 +160,11 @@ const createConsultation = async (req, res) => {
       data: consultation,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.isRateLimit ? 429 : 500).json({
+      success: false,
+      message: error.message,
+      isRateLimit: !!error.isRateLimit,
+    });
   }
 };
 
@@ -169,6 +172,7 @@ const getAllConsultations = async (req, res) => {
   try {
     const consultations = await Consultation.find({})
       .populate("patientId", "name age")
+      .populate("doctorId", "name")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -229,10 +233,9 @@ const getConsultationsByDoctorId = async (req, res) => {
 
 const getConsultationById = async (req, res) => {
   try {
-    const consultation = await Consultation.findById(req.params.id).populate(
-      "patientId",
-      "name age",
-    );
+    const consultation = await Consultation.findById(req.params.id)
+      .populate("patientId", "name age")
+      .populate("doctorId", "name");
     if (!consultation) {
       return res
         .status(404)
@@ -246,6 +249,10 @@ const getConsultationById = async (req, res) => {
 
 const updateConsultation = async (req, res) => {
   try {
+    console.log(
+      `[updateConsultation] id=${req.params.id} payload keys=${Object.keys(req.body).join(",")}`,
+    );
+
     const consultation = await Consultation.findByIdAndUpdate(
       req.params.id,
       req.body,
@@ -257,6 +264,10 @@ const updateConsultation = async (req, res) => {
         .json({ success: false, message: "Consultation not found" });
     }
 
+    console.log(
+      `[updateConsultation] saved OK, new diagnosis="${consultation.diagnosis}"`,
+    );
+
     if (req.body.isChronic) {
       await addDiagnosisToChronicConditions(
         consultation.patientId,
@@ -266,6 +277,7 @@ const updateConsultation = async (req, res) => {
 
     res.status(200).json({ success: true, data: consultation });
   } catch (error) {
+    console.error("[updateConsultation] FAILED:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -279,47 +291,62 @@ const deleteConsultation = async (req, res) => {
         .json({ success: false, message: "Consultation not found" });
     }
 
-    const patientId = consultation.patientId;
+    // بنمشي بالظبط على السلسلة المتصلة بالكونسلتيشن اللي هتتمسح، في
+    // الاتجاهين:
+    // • forward: فولو أبات اتجدولت من الكونسلتيشن دي (consultationId)
+    // • backward: فولو أب خلصت (اتكملت) بزيارة هي الكونسلتيشن دي (completionConsultationId)
+    // ولو أي فولو أب في السلسلة كانت خلصت بزيارة تانية (كونسلتيشن تانية)،
+    // الزيارة دي بتتحسب هي كمان جزء من نفس السلسلة وبتتمسح خالص (مش بس
+    // بريسكربتها) — عشان الفولو أب دي أصلاً محفوظة كـ"كونسلتيشن" في
+    // الداتا بيز، فمفيش معنى تفضل الكونسلتيشن دي قاعدة من غير الفولو أب
+    // اللي بتمثلها، ولا يفضل ظاهر كارت "Follow-up Visit" في الـ Patient
+    // History من غير روشتة وراه
+    const deadFollowupIds = new Set();
+    const deadConsultationIds = new Set([String(consultation._id)]);
+    const consultationsToWalk = [String(consultation._id)];
+    const visitedConsultations = new Set();
 
-    // امسح البريسكربشن المرتبطة بالكونسلتيشن دي مباشرة، وبعدين امسح
-    // الكونسلتيشن نفسها
-    await Prescription.deleteMany({ consultationId: consultation._id });
-    await consultation.deleteOne();
+    while (consultationsToWalk.length > 0) {
+      const currentId = consultationsToWalk.shift();
+      if (visitedConsultations.has(currentId)) continue;
+      visitedConsultations.add(currentId);
 
-    // تنضيف شامل لكل فولو أبات نفس المريض: كل فولو أب بيتحدد صلاحيتها
-    // بمرجع واحد بس حسب حالتها —
-    // • لو confirmed (يعني اتكملت): المرجع الصحيح هو completionConsultationId
-    //   (زيارة الإكمال الفعلية)، مش الكونسلتيشن الأصلية اللي جدولتها
-    // • لو لسه pending: المرجع هو consultationId (الكونسلتيشن اللي جدولتها)
-    // لو المرجع بتاعها بقى مش موجود في الداتا بيز (زي الكونسلتيشن اللي
-    // اتمسحت دلوقتي)، الفولو أب دي بقت يتيمة وبتتمسح خالص من غير ما ترجع
-    // pending أو تفضل معلقة
-    const patientFollowups = await Followup.find({ patientId });
+      const forwardFollowups = await Followup.find({
+        consultationId: currentId,
+      });
+      const backwardFollowups = await Followup.find({
+        completionConsultationId: currentId,
+      });
 
-    for (const followup of patientFollowups) {
-      const refToCheck =
-        followup.status === "confirmed" && followup.completionConsultationId
-          ? followup.completionConsultationId
-          : followup.consultationId;
+      for (const followup of [...forwardFollowups, ...backwardFollowups]) {
+        const fid = String(followup._id);
+        if (deadFollowupIds.has(fid)) continue;
+        deadFollowupIds.add(fid);
 
-      const stillExists = refToCheck
-        ? await Consultation.exists({ _id: refToCheck })
-        : false;
-
-      if (!stillExists) {
         if (followup.completionConsultationId) {
-          await Prescription.deleteMany({
-            consultationId: followup.completionConsultationId,
-          });
+          const compId = String(followup.completionConsultationId);
+          deadConsultationIds.add(compId);
+          consultationsToWalk.push(compId);
         }
-        await Followup.findByIdAndDelete(followup._id);
       }
     }
+
+    if (deadConsultationIds.size > 0) {
+      await Prescription.deleteMany({
+        consultationId: { $in: [...deadConsultationIds] },
+      });
+    }
+    if (deadFollowupIds.size > 0) {
+      await Followup.deleteMany({ _id: { $in: [...deadFollowupIds] } });
+    }
+    await Consultation.deleteMany({
+      _id: { $in: [...deadConsultationIds] },
+    });
 
     res.status(200).json({
       success: true,
       message:
-        "Consultation and related follow-ups/prescriptions deleted successfully",
+        "Consultation and its full follow-up chain deleted successfully",
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -342,9 +369,10 @@ const getAIRecommendation = async (req, res) => {
       data: agentResult,
     });
   } catch (error) {
-    res.status(500).json({
+    res.status(error.isRateLimit ? 429 : 500).json({
       success: false,
       message: error.message,
+      isRateLimit: !!error.isRateLimit,
     });
   }
 };
