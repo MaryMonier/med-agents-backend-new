@@ -1,8 +1,6 @@
-const OpenAI = require('openai');
 const Groq = require('groq-sdk');
-const { OPENAI_API_KEY, GROQ_API_KEY } = require('../config/env');
+const { GROQ_API_KEY } = require('../config/env');
 
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 // بنكتشف تحديدًا لو الخطأ ده بسبب rate limit (429) — سواء من OpenAI أو Groq —
@@ -21,9 +19,10 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
 
   // jsonMode بيفرض على الموديل إنه يرجّع JSON صالح فعلاً (مش بس نطلب منه في
   // البرومبت) — ده بيقفل غالبية حالات الفشل اللي كانت بتحصل لما الموديل
-  // (خصوصًا Groq) يضيف كلام زيادة قبل/بعد الـ JSON أو يرجّع شكل ملخبط
+  // يضيف كلام زيادة قبل/بعد الـ JSON أو يرجّع شكل ملخبط
   const responseFormat = jsonMode ? { type: 'json_object' } : undefined;
 
+<<<<<<< HEAD
   // OpenAI أول، لو فشلت → Groq
   try {
     if (openai) {
@@ -58,6 +57,17 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
       temperature: 0.3,
       ...(responseFormat ? { response_format: responseFormat } : {}),
     });
+=======
+  const response = await groq.chat.completions.create({
+    model: 'openai/gpt-oss-120b',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage }
+    ],
+    temperature: 0.3,
+    ...(responseFormat ? { response_format: responseFormat } : {}),
+  });
+>>>>>>> 8176505c30d9ae403e9d589496d84f0778aee3c9
 
     return {
       content: response.choices[0].message.content,
@@ -82,11 +92,8 @@ const streamCompletion = async ({ systemPrompt, userMessage, res }) => {
   res.setHeader('Cache-Control', 'no-cache');
 
   try {
-    const client = openai || groq;
-    const model = openai ? 'gpt-4o-mini' : 'llama-3.3-70b-versatile';
-
-    const stream = await client.chat.completions.create({
-      model,
+    const stream = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-120b',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }
