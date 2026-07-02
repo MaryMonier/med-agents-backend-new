@@ -219,10 +219,9 @@ const getConsultationsByDoctorId = async (req, res) => {
 
 const getConsultationById = async (req, res) => {
   try {
-    const consultation = await Consultation.findById(req.params.id).populate(
-      "patientId",
-      "name age",
-    );
+    const consultation = await Consultation.findById(req.params.id)
+      .populate("patientId", "name age")
+      .populate("doctorId", "name");
     if (!consultation) {
       return res
         .status(404)
