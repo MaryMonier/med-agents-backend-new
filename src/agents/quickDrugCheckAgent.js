@@ -1,26 +1,14 @@
-const OpenAI = require("openai");
 const Groq = require("groq-sdk");
-const { OPENAI_API_KEY, GROQ_API_KEY } = require("../config/env");
+const { GROQ_API_KEY } = require("../config/env");
 const { checkInteractions } = require("../services/openFDA.service");
 
-const openaiClient = OPENAI_API_KEY
-  ? new OpenAI({ apiKey: OPENAI_API_KEY })
-  : null;
 const groqClient = new Groq({ apiKey: GROQ_API_KEY });
 
 const callLLM = async (params) => {
-  try {
-    return await openaiClient.chat.completions.create({
-      ...params,
-      model: "gpt-4o-mini",
-    });
-  } catch (err) {
-    console.log("OpenAI failed, falling back to Groq...");
-    return await groqClient.chat.completions.create({
-      ...params,
-      model: "llama-3.3-70b-versatile",
-    });
-  }
+  return await groqClient.chat.completions.create({
+    ...params,
+    model: "openai/gpt-oss-120b",
+  });
 };
 
 // ─── Quick Drug Check ───────────────────────────────────────────────────────
