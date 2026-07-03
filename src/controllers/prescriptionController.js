@@ -156,6 +156,10 @@ const runQuickCheckForMedications = async (
           newDrug: {
             name: med.name,
             activeIngredient: med.activeIngredient || null,
+            dosageAmount: med.dosageAmount || null,
+            dosageUnit: med.dosageUnit || null,
+            frequencyCount: med.frequencyCount || null,
+            frequencyPeriod: med.frequencyPeriod || null,
           },
           activeMedications,
           allergies,

@@ -1,27 +1,15 @@
 const Groq = require('groq-sdk');
-const OpenAI = require('openai');
-const { GROQ_API_KEY, OPENAI_API_KEY } = require('../config/env');
+const { GROQ_API_KEY } = require('../config/env');
 const { checkInteractions } = require('../services/openFDA.service');
 const { retrieve, formatContext } = require('../services/pinecone.service'); // ✅ pinecone مش rag
 
 const groqClient = new Groq({ apiKey: GROQ_API_KEY });
-const openaiClient = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
-// Groq أول (أساسي دلوقتي)، لو فشلت → OpenAI (لو مفتاحه شغال وله رصيد)
 const callLLM = async (params) => {
-  try {
-    return await groqClient.chat.completions.create({
-      ...params,
-      model: 'openai/gpt-oss-120b',
-    });
-  } catch (err) {
-    console.log('Groq failed, falling back to OpenAI...');
-    if (!openaiClient) throw err;
-    return await openaiClient.chat.completions.create({
-      ...params,
-      model: 'gpt-4o-mini',
-    });
-  }
+  return await groqClient.chat.completions.create({
+    ...params,
+    model: 'openai/gpt-oss-120b',
+  });
 };
 
 const runDrugSafetyAgent = async ({ medications = [], allergies = [], chronicConditions = [], age = null, language = 'en' }) => {

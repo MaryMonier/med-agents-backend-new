@@ -187,13 +187,18 @@ const getAllConsultations = async (req, res) => {
 
 const getAllConsultationsByDoctor = async (req, res) => {
   try {
+    // الأدمن يشوف كونسلتيشنز كل الدكاترة، الدكتور العادي يشوف بتاعته بس
+    const isAdmin = req.user.role === "admin";
+    const filter = isAdmin ? {} : { doctorId: req.user.id };
+
     // الكونسلتيشن اللي جاية من فولو أب (followupId موجود) مش بتظهر هنا،
     // دي بتظهر بس في صفحة Follow-ups تحت تاب Completed، وفي Patient History
     const consultations = await Consultation.find({
-      doctorId: req.user.id,
+      ...filter,
       followupId: null,
     })
       .populate("patientId", "name age")
+      .populate("doctorId", "name")
       .sort({ createdAt: -1 });
 
     res.status(200).json({

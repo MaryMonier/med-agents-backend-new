@@ -3,9 +3,9 @@ const { GROQ_API_KEY } = require('../config/env');
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
-// بنكتشف تحديدًا لو الخطأ ده بسبب rate limit (429) — سواء من OpenAI أو Groq —
-// عشان الكولر يقدر يتصرف بحكمة (يوقف الـ retry فورًا بدل ما يحاول تاني في
-// نفس الدقيقة وهيفشل بنفس الطريقة، ويورّي رسالة واضحة للدكتور بدل الـ JSON الخام)
+// بنكتشف تحديدًا لو الخطأ ده بسبب rate limit (429) — عشان الكولر يقدر
+// يتصرف بحكمة (يوقف الـ retry فورًا بدل ما يحاول تاني في نفس الدقيقة
+// وهيفشل بنفس الطريقة)، ويورّي رسالة واضحة للدكتور بدل الـ JSON الخام
 const isRateLimitError = (err) => {
   return (
     err?.status === 429 ||
@@ -22,34 +22,11 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
   // يضيف كلام زيادة قبل/بعد الـ JSON أو يرجّع شكل ملخبط
   const responseFormat = jsonMode ? { type: 'json_object' } : undefined;
 
-<<<<<<< HEAD
-  // OpenAI أول، لو فشلت → Groq
-  try {
-    if (openai) {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0.3,
-        ...(responseFormat ? { response_format: responseFormat } : {}),
-      });
-      return {
-        content: response.choices[0].message.content,
-        tokensUsed: response.usage.total_tokens,
-        costUSD: (response.usage.total_tokens / 1000) * 0.0001,
-        latencyMs: Date.now() - startTime,
-      };
-    }
-  } catch (err) {
-    console.log('OpenAI failed, falling back to Groq...');
-  }
-
-  // Groq fallback
+  // معندناش OpenAI key، فبنعتمد على Groq بس — لكن سايبين الـ try/catch عشان
+  // نكتشف أخطاء الـ rate limit ونرجّع رسالة واضحة للفرونت بدل الـ JSON الخام
   try {
     const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-120b',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }
@@ -57,17 +34,6 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
       temperature: 0.3,
       ...(responseFormat ? { response_format: responseFormat } : {}),
     });
-=======
-  const response = await groq.chat.completions.create({
-    model: 'openai/gpt-oss-120b',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage }
-    ],
-    temperature: 0.3,
-    ...(responseFormat ? { response_format: responseFormat } : {}),
-  });
->>>>>>> 8176505c30d9ae403e9d589496d84f0778aee3c9
 
     return {
       content: response.choices[0].message.content,

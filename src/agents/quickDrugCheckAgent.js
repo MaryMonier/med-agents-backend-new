@@ -49,6 +49,16 @@ const runQuickDrugCheck = async ({
 
     const newDrugLabel = formatDrugLabel(newDrug);
 
+    // الجرعة المقترحة للدواء الجديد (لو متاحة) عشان الـ AI يقدر يحكم هل هي
+    // مناسبة لسن المريض أو لأ (مش بس يحكم على الدواء نفسه بمعزل عن الجرعة)
+    const doseInfo =
+      newDrug.dosageAmount && newDrug.dosageUnit
+        ? `${newDrug.dosageAmount} ${newDrug.dosageUnit}` +
+          (newDrug.frequencyCount && newDrug.frequencyPeriod
+            ? `, ${newDrug.frequencyCount}x ${newDrug.frequencyPeriod}`
+            : "")
+        : "Not specified";
+
     // نجمع كل الأسماء (البراند + المادة الفعالة) عشان الـ FDA lookup يلاقي بيانات
     // التفاعلات حتى لو الـ label مكتوب بالمادة الفعالة بس
     const fdaLookupNames = [
@@ -89,6 +99,7 @@ const runQuickDrugCheck = async ({
 
     const userPrompt = `New drug being added: ${newDrugLabel}
 (Note: the text in parentheses, if present, is the active ingredient — check allergies and interactions against BOTH the brand name and the active ingredient name.)
+Prescribed dose for this new drug: ${doseInfo}
 Currently active medications (including ones still running from previous prescriptions): ${activeList}
 ${duplicateNames.length > 0 ? `IMPORTANT: "${newDrugLabel}" (by name or active ingredient) is already an active medication for this patient: ${duplicateNames.join(", ")}.` : ""}
 Patient allergies: ${allergiesList}
@@ -102,6 +113,7 @@ Check for ANY of the following:
 2. A dangerous interaction between "${newDrugLabel}" (including its active ingredient) and any of the active medications listed above.
 3. An allergy conflict — check if the patient's allergies list contains the active ingredient or brand name of "${newDrugLabel}".
 4. An age-related contraindication for "${newDrugLabel}" given the patient's age and gender (for example: aspirin or any drug containing aspirin/salicylate in children/teenagers under 18 can cause Reye's syndrome).
+5. If a dose is specified above, is that SPECIFIC dose/frequency appropriate for a patient of this age (for example: an adult-sized dose given to an infant or young child, or a pediatric dose far too low/high for an adult)? Only flag this if the dose is clearly inappropriate for the age group, not for minor variations.
 
 Is there any issue from the above?`;
 
@@ -125,6 +137,7 @@ STRICT RULES:
 - For drug-drug interactions, format EXACTLY like: "<Drug A> can't be used with <Drug B> because <short reason>"
 - For allergy conflicts, format EXACTLY like: "<Drug> can't be used because patient is allergic to <allergen>"
 - For age-related issues, format EXACTLY like: "<Drug> can't be used at age <age> because <short reason>"
+- For dose-related issues, format EXACTLY like: "<Drug> dose of <dose> is not appropriate for age <age> because <short reason>"
 - If there is more than one issue, mention only the single most important one
 - If there is NO issue at all, respond with exactly: NONE
 - Never write more than one sentence
