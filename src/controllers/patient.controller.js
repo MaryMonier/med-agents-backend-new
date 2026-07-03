@@ -84,8 +84,10 @@ const getPatientsByDoctorId = async (request, response) => {
     const { page = 1, limit = 10 } = request.query;
     const skip = (page - 1) * limit;
 
-    const totalPatients = await Patient.countDocuments({ createdBy: doctorId });
-    const patients = await Patient.find({ createdBy: doctorId })
+    const filter = { $or: [{ createdBy: doctorId }, { doctors: doctorId }] };
+
+    const totalPatients = await Patient.countDocuments(filter);
+    const patients = await Patient.find(filter)
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
