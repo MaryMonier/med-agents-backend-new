@@ -22,7 +22,6 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
   // يضيف كلام زيادة قبل/بعد الـ JSON أو يرجّع شكل ملخبط
   const responseFormat = jsonMode ? { type: 'json_object' } : undefined;
 
-<<<<<<< HEAD
   // OpenAI أول، لو فشلت → Groq
   try {
     if (openai) {
@@ -57,18 +56,6 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
       temperature: 0.3,
       ...(responseFormat ? { response_format: responseFormat } : {}),
     });
-=======
-  const response = await groq.chat.completions.create({
-    model: 'openai/gpt-oss-120b',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage }
-    ],
-    temperature: 0.3,
-    ...(responseFormat ? { response_format: responseFormat } : {}),
-  });
->>>>>>> 8176505c30d9ae403e9d589496d84f0778aee3c9
-
     return {
       content: response.choices[0].message.content,
       tokensUsed: response.usage.total_tokens,
