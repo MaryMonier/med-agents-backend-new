@@ -4,11 +4,9 @@ const Payment = require("../models/Payment");
 const { calculateAmountCents } = require("../config/plans");
 const paymobService = require("../services/paymob.service");
 
-// عدّلي القيمة دي في .env لو الباك إند أو الفرونت شغالين على دومين مختلف
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 
-// الدكتور بيدوس "اشترك دلوقتي" -> بنرجعله رابط دفع باي موب
 const initiatePayment = async (req, res) => {
   try {
     const { plan, months } = req.body;
