@@ -1,6 +1,5 @@
 const ContactMessage = require("../models/ContactMessage");
 
-// أي زائر (من غير تسجيل دخول) يقدر يبعت رسالة من صفحة Contact Us
 const sendMessage = async (req, res) => {
   try {
     const { name, email, message } = req.body;
@@ -35,21 +34,65 @@ const sendMessage = async (req, res) => {
   }
 };
 
-// للأدمن بس - عرض كل الرسائل اللي وصلت (الأحدث أولًا)
 const getMessages = async (req, res) => {
   try {
-    const messages = await ContactMessage.find().sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || "";
+
+    const filter = search
+      ? {
+          $or: [
+            { name: { $regex: search, $options: "i" } },
+            { email: { $regex: search, $options: "i" } },
+            { message: { $regex: search, $options: "i" } },
+          ],
+        }
+      : {};
+
+    const total = await ContactMessage.countDocuments(filter);
+
+    const messages = await ContactMessage.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
 
     return res.status(200).json({
       success: true,
       data: messages,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+const markAsRead = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const message = await ContactMessage.findByIdAndUpdate(
+      id,
+      { status: "read" },
+      { new: true }
+    );
+
+    if (!message) {
+      return res.status(404).json({ success: false, message: "Message not found" });
+    }
+
+    return res.status(200).json({ success: true, data: message });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 module.exports = {
   sendMessage,
   getMessages,
+  markAsRead
 };
