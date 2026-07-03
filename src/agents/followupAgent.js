@@ -75,7 +75,6 @@ Return JSON:
     } catch (error) {
       lastError = error;
       console.error(`Followup Agent Error (attempt ${attempt}/${MAX_ATTEMPTS}):`, error.message);
-      if (error.isRateLimit) break;
       if (attempt < MAX_ATTEMPTS) {
         await delay(700 * attempt);
       }
@@ -86,8 +85,7 @@ Return JSON:
   return {
     success: false,
     error: true,
-    isRateLimit: !!lastError?.isRateLimit,
-    message: lastError?.isRateLimit ? lastError.message : 'Followup agent failed',
+    message: 'Followup agent failed',
     fallback: {
       followupInstructions: 'Unable to generate follow-up instructions.',
       recommendedFollowupDate: 'Based on doctor assessment',

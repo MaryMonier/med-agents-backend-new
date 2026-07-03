@@ -1,15 +1,26 @@
+const OpenAI = require('openai');
 const Groq = require('groq-sdk');
-const { GROQ_API_KEY } = require('../config/env');
+const { OPENAI_API_KEY, GROQ_API_KEY } = require('../config/env');
 const { checkInteractions } = require('../services/openFDA.service');
 const { retrieve, formatContext } = require('../services/pinecone.service'); // ✅ pinecone مش rag
 
+const openaiClient = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const groqClient = new Groq({ apiKey: GROQ_API_KEY });
 
+// ✅ نفس الـ fallback بتاع medicalAgent
 const callLLM = async (params) => {
-  return await groqClient.chat.completions.create({
-    ...params,
-    model: 'openai/gpt-oss-120b',
-  });
+  try {
+    return await openaiClient.chat.completions.create({
+      ...params,
+      model: 'gpt-4o-mini',
+    });
+  } catch (err) {
+    console.log('OpenAI failed, falling back to Groq...');
+    return await groqClient.chat.completions.create({
+      ...params,
+      model: 'openai/gpt-oss-120b',
+    });
+  }
 };
 
 const runDrugSafetyAgent = async ({ medications = [], allergies = [], chronicConditions = [], age = null, language = 'en' }) => {

@@ -1,14 +1,24 @@
 const Groq = require('groq-sdk');
-const { GROQ_API_KEY } = require('../config/env');
+const OpenAI = require('openai');
+const { GROQ_API_KEY, OPENAI_API_KEY } = require('../config/env');
 const { retrieve, formatContext } = require('../services/pinecone.service.js');
 
 const groqClient = new Groq({ apiKey: GROQ_API_KEY });
+const openaiClient = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 const callLLM = async (params) => {
-  return await groqClient.chat.completions.create({
-    ...params,
-    model: 'openai/gpt-oss-120b',
-  });
+  try {
+    return await openaiClient.chat.completions.create({
+      ...params,
+      model: 'gpt-4o-mini',
+    });
+  } catch (err) {
+    console.log('OpenAI failed, falling back to Groq...');
+    return await groqClient.chat.completions.create({
+      ...params,
+      model: 'openai/gpt-oss-120b',
+    });
+  }
 };
 
 const translateToEnglish = (text) => {
