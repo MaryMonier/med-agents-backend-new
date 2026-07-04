@@ -1,4 +1,5 @@
 const User = require("../models/User")
+const { calculateNewSubscriptionEnd } = require("../config/plans");
 
 const getMySubscription = async (req, res) => {
   const user = await User.findById(req.user.id).select("subscription");
@@ -75,8 +76,7 @@ const renewSubscription = async (req, res) => {
     }
 
     const startDate = new Date();
-    const endDate = new Date();
-    endDate.setMonth(endDate.getMonth() + months);
+    const endDate = calculateNewSubscriptionEnd(user.subscription, months);
 
     user.subscription.status = "active";
     user.subscription.plan = plan || user.subscription.plan;

@@ -1,12 +1,14 @@
 const crypto = require("crypto");
 const User = require("../models/User");
 const Payment = require("../models/Payment");
-const { calculateAmountCents } = require("../config/plans");
+const { calculateAmountCents, calculateNewSubscriptionEnd } = require("../config/plans");
 const paymobService = require("../services/paymob.service");
 
+// عدّلي القيمة دي في .env لو الباك إند أو الفرونت شغالين على دومين مختلف
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 
+// الدكتور بيدوس "اشترك دلوقتي" -> بنرجعله رابط دفع باي موب
 const initiatePayment = async (req, res) => {
   try {
     const { plan, months } = req.body;
@@ -134,8 +136,7 @@ const handlePaymobWebhook = async (req, res) => {
 
       if (doctor) {
         const startDate = new Date();
-        const endDate = new Date();
-        endDate.setMonth(endDate.getMonth() + payment.months);
+        const endDate = calculateNewSubscriptionEnd(doctor.subscription, payment.months);
 
         doctor.subscription.status = "active";
         doctor.subscription.plan = payment.plan;
@@ -185,8 +186,62 @@ const getPaymentStatus = async (req, res) => {
   }
 };
 
+// للأدمن بس - عرض كل عمليات الدفع مع بيانات الدكتور، pagination وبحث
+const getAllPayments = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || "";
+    const status = req.query.status || "";
+
+    const filter = {};
+
+    if (status) {
+      filter.status = status;
+    }
+
+    let doctorIds = null;
+
+    if (search) {
+      const matchingDoctors = await User.find({
+        role: "doctor",
+        $or: [
+          { name: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+        ],
+      }).select("_id");
+
+      doctorIds = matchingDoctors.map((d) => d._id);
+      filter.doctor = { $in: doctorIds };
+    }
+
+    const total = await Payment.countDocuments(filter);
+
+    const payments = await Payment.find(filter)
+      .populate("doctor", "name email")
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    return res.status(200).json({
+      success: true,
+      data: payments,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("getAllPayments error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   initiatePayment,
   handlePaymobWebhook,
   getPaymentStatus,
+  getAllPayments,
 };
