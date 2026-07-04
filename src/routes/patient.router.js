@@ -5,19 +5,22 @@ const { getAllPatients,
      deletePatient, 
      getPatientHistory,
      updatePatient,
-    getAllPatientsByDoctor,
-    getPatientsByDoctorId } = require("../controllers/patient.controller")
-const adminMiddleware = require("../middleware/admin.middleware")
-
+    getPatientsByDoctorId ,
+    getAllPatientsByDoctor } = require("../controllers/patient.controller")
+const adminMiddleware = require("../middleware/admin.middleware");
+const checkSubscription = require("../middleware/checkSubscription.middleware");
 const router = require("express").Router();
 
-router.get("/",authMiddleware,getAllPatients)
-router.get("/doctor",authMiddleware,getAllPatientsByDoctor)
+
+router.get("/",authMiddleware , checkSubscription,getAllPatients)
+router.get("/doctor",authMiddleware , checkSubscription,getAllPatientsByDoctor)
+router.get("/:id",authMiddleware , checkSubscription,getPatientById)
+router.post("/",authMiddleware , checkSubscription,createPatient)
+router.delete("/:id",authMiddleware , checkSubscription,deletePatient)
+router.patch("/:id",authMiddleware , checkSubscription,updatePatient)
+router.get("/:id/history", authMiddleware , checkSubscription, getPatientHistory);
+
+
 router.get("/by-doctor/:doctorId",authMiddleware,getPatientsByDoctorId)
-router.get("/:id",authMiddleware,getPatientById)
-router.post("/",authMiddleware,createPatient)
-router.delete("/:id",authMiddleware,deletePatient)
-router.patch("/:id",authMiddleware,updatePatient)
-router.get("/:id/history", authMiddleware, getPatientHistory);
 
 module.exports = router;

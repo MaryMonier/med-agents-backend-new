@@ -13,6 +13,9 @@ const {
   updatePrescription,
   deletePrescription,
 } = require("../controllers/prescriptionController");
+const checkSubscription = require("../middleware/checkSubscription.middleware");
+
+
 
 // ⚠️ الراوتس الثابتة لازم تكون قبل الـ dynamic routes
 router.get("/drugs/search", authMiddleware, searchDrugs);
@@ -26,9 +29,10 @@ router.get(
   authMiddleware,
   getPrescriptionByConsultation,
 );
-router.get("/patient/:patientId", authMiddleware, getPrescriptionsByPatient);
-router.get("/:id", authMiddleware, getPrescriptionById);
-router.patch("/:id", authMiddleware, updatePrescription);
-router.delete("/:id", authMiddleware, deletePrescription);
+
+router.get("/patient/:patientId", authMiddleware,checkSubscription ,getPrescriptionsByPatient);
+router.get("/:id", authMiddleware,checkSubscription ,getPrescriptionById);
+router.patch("/:id", authMiddleware,checkSubscription ,updatePrescription);
+router.delete("/:id", authMiddleware,checkSubscription ,deletePrescription);
 
 module.exports = router;

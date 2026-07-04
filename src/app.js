@@ -4,6 +4,8 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const errorHandler = require("./middleware/errorHandler");
 const patientRouter = require("./routes/patient.router");
+const contactRouter = require("./routes/contact.routes");
+// const errorHandler = require('./middleware/errorHandler');
 const piiSanitize = require("./middleware/piiSanitize");
 const authRoutes = require("./routes/auth.routes");
 const followupRoutes = require("./routes/followupRoutes");
@@ -11,13 +13,11 @@ const prescriptionRoutes = require("./routes/prescriptionRoutes");
 const consultationRoutes = require("./routes/consultationRoutes");
 const drugSafetyRoutes = require("./routes/drugSafetyRoutes");
 const quickDrugCheckRoutes = require("./routes/quickDrugCheckRoutes");
+const subscriptionRoutes = require("./routes/subscription.router");
+const paymentRoutes = require("./routes/payment.routes");
 const followupAgentRouter = require("./routes/followupAgentRoutes");
-const contactRouter = require("./routes/contact.routes");
-
 const app = express();
-
 const medicalAgentRouter = require("./routes/medicalAgentRoutes");
-
 const reportGenRoutes = require("./routes/reportGen.routes");
 
 const limiter = rateLimit({
@@ -45,10 +45,10 @@ app.use("/api/consultations", consultationRoutes);
 
 
 app.use("/api/medical-agent", medicalAgentRouter);
-
+app.use("/api/payment", paymentRoutes);
 app.use("/api/followup-agent", followupAgentRouter);
 app.use("/api/drug-safety", quickDrugCheckRoutes);
-
+app.use("/api/subscription", subscriptionRoutes);
 app.get("/", (req, res) => {
   res.json({ message: "Med Agents API is running!" });
 });
