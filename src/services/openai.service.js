@@ -1,56 +1,58 @@
+const OpenAI = require('openai');
 const Groq = require('groq-sdk');
-const { GROQ_API_KEY } = require('../config/env');
+const { OPENAI_API_KEY, GROQ_API_KEY } = require('../config/env');
 
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const groq = new Groq({ apiKey: GROQ_API_KEY });
-
-// بنكتشف تحديدًا لو الخطأ ده بسبب rate limit (429) — عشان الكولر يقدر
-// يتصرف بحكمة (يوقف الـ retry فورًا بدل ما يحاول تاني في نفس الدقيقة
-// وهيفشل بنفس الطريقة)، ويورّي رسالة واضحة للدكتور بدل الـ JSON الخام
-const isRateLimitError = (err) => {
-  return (
-    err?.status === 429 ||
-    err?.error?.code === 'rate_limit_exceeded' ||
-    /rate limit/i.test(err?.message || '')
-  );
-};
 
 const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) => {
   const startTime = Date.now();
 
   // jsonMode بيفرض على الموديل إنه يرجّع JSON صالح فعلاً (مش بس نطلب منه في
   // البرومبت) — ده بيقفل غالبية حالات الفشل اللي كانت بتحصل لما الموديل
-  // يضيف كلام زيادة قبل/بعد الـ JSON أو يرجّع شكل ملخبط
+  // (خصوصًا Groq) يضيف كلام زيادة قبل/بعد الـ JSON أو يرجّع شكل ملخبط
   const responseFormat = jsonMode ? { type: 'json_object' } : undefined;
 
-  // معندناش OpenAI key، فبنعتمد على Groq بس — لكن سايبين الـ try/catch عشان
-  // نكتشف أخطاء الـ rate limit ونرجّع رسالة واضحة للفرونت بدل الـ JSON الخام
+  // OpenAI أول، لو فشلت → Groq
   try {
-    const response = await groq.chat.completions.create({
-      model: 'openai/gpt-oss-120b',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage }
-      ],
-      temperature: 0.3,
-      ...(responseFormat ? { response_format: responseFormat } : {}),
-    });
-
-    return {
-      content: response.choices[0].message.content,
-      tokensUsed: response.usage.total_tokens,
-      costUSD: 0,
-      latencyMs: Date.now() - startTime,
-    };
-  } catch (err) {
-    if (isRateLimitError(err)) {
-      const cleanError = new Error(
-        "You've reached your plan's daily limit for AI-powered recommendations. Please upgrade your subscription to continue using this feature.",
-      );
-      cleanError.isRateLimit = true;
-      throw cleanError;
+    if (openai) {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        temperature: 0.3,
+        ...(responseFormat ? { response_format: responseFormat } : {}),
+      });
+      return {
+        content: response.choices[0].message.content,
+        tokensUsed: response.usage.total_tokens,
+        costUSD: (response.usage.total_tokens / 1000) * 0.0001,
+        latencyMs: Date.now() - startTime,
+      };
     }
-    throw err;
+  } catch (err) {
+    console.log('OpenAI failed, falling back to Groq...');
   }
+
+  // Groq fallback
+  const response = await groq.chat.completions.create({
+    model: 'openai/gpt-oss-120b',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage }
+    ],
+    temperature: 0.3,
+    ...(responseFormat ? { response_format: responseFormat } : {}),
+  });
+
+  return {
+    content: response.choices[0].message.content,
+    tokensUsed: response.usage.total_tokens,
+    costUSD: 0,
+    latencyMs: Date.now() - startTime,
+  };
 };
 
 const streamCompletion = async ({ systemPrompt, userMessage, res }) => {
@@ -58,8 +60,11 @@ const streamCompletion = async ({ systemPrompt, userMessage, res }) => {
   res.setHeader('Cache-Control', 'no-cache');
 
   try {
-    const stream = await groq.chat.completions.create({
-      model: 'openai/gpt-oss-120b',
+    const client = openai || groq;
+    const model = openai ? 'gpt-4o-mini' : 'openai/gpt-oss-120b';
+
+    const stream = await client.chat.completions.create({
+      model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage }

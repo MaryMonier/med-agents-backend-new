@@ -187,13 +187,18 @@ const getAllConsultations = async (req, res) => {
 
 const getAllConsultationsByDoctor = async (req, res) => {
   try {
+    // الأدمن يشوف كونسلتيشنز كل الدكاترة، الدكتور العادي يشوف بتاعته بس
+    const isAdmin = req.user.role === "admin";
+    const filter = isAdmin ? {} : { doctorId: req.user.id };
+
     // الكونسلتيشن اللي جاية من فولو أب (followupId موجود) مش بتظهر هنا،
     // دي بتظهر بس في صفحة Follow-ups تحت تاب Completed، وفي Patient History
     const consultations = await Consultation.find({
-      doctorId: req.user.id,
+      ...filter,
       followupId: null,
     })
       .populate("patientId", "name age")
+      .populate("doctorId", "name")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -253,9 +258,17 @@ const updateConsultation = async (req, res) => {
       `[updateConsultation] id=${req.params.id} payload keys=${Object.keys(req.body).join(",")}`,
     );
 
+    // لو followUpDate جاية فاضية (يعني الدكتور مسحها عن قصد)، لازم نحولها
+    // لـ null مش نسيبها string فاضي — عشان Mongoose هيفشل وهو بيحاول يحوّلها
+    // لـ Date ويرمي CastError
+    const updatePayload = { ...req.body };
+    if ("followUpDate" in updatePayload && !updatePayload.followUpDate) {
+      updatePayload.followUpDate = null;
+    }
+
     const consultation = await Consultation.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updatePayload,
       { new: true, runValidators: true },
     );
     if (!consultation) {
@@ -275,6 +288,40 @@ const updateConsultation = async (req, res) => {
       );
     }
 
+    // لو الدكتور حدد (أو غيّر) تاريخ فولو أب وهو بيعدّل الكونسلتيشن/الفولو
+    // أب، لازم نتأكد إن فيه Followup فعلاً بالتاريخ ده — createConsultation
+    // بتعمل ده وقت الإنشاء، لكن التعديل مكانش بيعملها خالص، فكان ممكن الدكتور
+    // يحدد ميعاد فولو أب وهو بيعدّل ومتتعملش فولو أب فعلية.
+    // بنفرّق بين "الحقل مش موجود في الطلب خالص" (تعديل تاني مالوش دعوة
+    // بالفولو أب، فمنلمسهاش) و"الحقل موجود لكن فاضي" (الدكتور مسح التاريخ
+    // عن قصد، فلازم نلغي أي فولو أب pending كانت متجدولة)
+    if ("followUpDate" in req.body) {
+      const existingPendingFollowup = await Followup.findOne({
+        consultationId: consultation._id,
+        status: "pending",
+      });
+
+      if (req.body.followUpDate) {
+        if (existingPendingFollowup) {
+          // لو فيه فولو أب pending بالفعل مربوطة بالكونسلتيشن دي، بس حدّث تاريخها
+          existingPendingFollowup.scheduledDate = req.body.followUpDate;
+          await existingPendingFollowup.save();
+        } else {
+          await Followup.create({
+            consultationId: consultation._id,
+            patientId: consultation.patientId,
+            doctorId: req.user.id,
+            instructions: "-",
+            scheduledDate: req.body.followUpDate,
+            language: consultation.language || "en",
+          });
+        }
+      } else if (existingPendingFollowup) {
+        // الدكتور مسح تاريخ الفولو أب عن قصد → نلغي الفولو أب المعلقة دي
+        await existingPendingFollowup.deleteOne();
+      }
+    }
+
     res.status(200).json({ success: true, data: consultation });
   } catch (error) {
     console.error("[updateConsultation] FAILED:", error.message);
@@ -290,6 +337,8 @@ const deleteConsultation = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Consultation not found" });
     }
+
+    console.log(`[deleteConsultation] deleting id=${consultation._id}`);
 
     // بنمشي بالظبط على السلسلة المتصلة بالكونسلتيشن اللي هتتمسح، في
     // الاتجاهين:
@@ -331,6 +380,10 @@ const deleteConsultation = async (req, res) => {
       }
     }
 
+    console.log(
+      `[deleteConsultation] chain found: consultations=[${[...deadConsultationIds].join(",")}] followups=[${[...deadFollowupIds].join(",")}]`,
+    );
+
     if (deadConsultationIds.size > 0) {
       await Prescription.deleteMany({
         consultationId: { $in: [...deadConsultationIds] },
@@ -345,8 +398,7 @@ const deleteConsultation = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message:
-        "Consultation and its full follow-up chain deleted successfully",
+      message: "Consultation and its full follow-up chain deleted successfully",
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
