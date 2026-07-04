@@ -4,6 +4,7 @@ const authMiddleware = require("../middleware/auth.middleware");
 const {
   createFollowup,
   getFollowups,
+  getFollowupsByDoctorId,
   getFollowupById,
   updateFollowup,
   deleteFollowup,
@@ -15,6 +16,8 @@ const router = express.Router();
 router.use(authMiddleware);
 router.use(checkSubscription);
 router.route("/").post(createFollowup).get(getFollowups);
+
+router.route("/by-doctor/:doctorId").get(getFollowupsByDoctorId);
 
 router
   .route("/:id")

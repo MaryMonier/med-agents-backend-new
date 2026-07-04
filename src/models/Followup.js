@@ -7,11 +7,24 @@ const followupSchema = new mongoose.Schema(
       ref: "Consultation",
       required: true,
     },
+    // بيتحدد بس لما الفولو أب دي تتكمّل (Complete Follow-up) — بتشاور على
+    // زيارة الإكمال نفسها، مختلفة عن consultationId اللي فضلت بتشاور على
+    // الكونسلتيشن الأصلية اللي جدولت الفولو أب دي من الأول
+    completionConsultationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Consultation",
+      default: null,
+    },
     patientId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
       required: true,
     },
+    doctorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+
     instructions: { type: String, required: true },
     scheduledDate: { type: Date },
     reminderSent: { type: Boolean, default: false },

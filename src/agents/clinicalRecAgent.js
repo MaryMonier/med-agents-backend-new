@@ -1,6 +1,8 @@
 const { chatCompletion } = require('../services/openai.service');
 const { retrieve, formatContext } = require('../services/pinecone.service');
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const runClinicalRecAgent = async ({
   rawInput = "",
   symptoms = [],
@@ -11,11 +13,16 @@ const runClinicalRecAgent = async ({
     ? symptoms.join(", ")
     : "Not specified";
 
+  // لو الـ RAG retrieval فشل، نكمّل من غير context بدل ما نفشّل الطلب كله
+  let context = "";
   try {
     const ragDocs = await retrieve(formattedSymptoms, language, 3);
-    const context = formatContext(ragDocs, language);
+    context = formatContext(ragDocs, language);
+  } catch (ragError) {
+    console.error("RAG retrieval failed, continuing without context:", ragError.message);
+  }
 
-    const systemPrompt = `
+  const systemPrompt = `
 You are a clinical recommendation assistant for licensed doctors.
 Use the following medical guidelines:
 ${context}
@@ -34,7 +41,7 @@ URGENCY LEVEL DEFINITIONS:
 IMPORTANT: If rawInput and symptoms contain NO medical terms at all, you MUST return "unknown".
     `;
 
-    const userMessage = `
+  const userMessage = `
 Doctor Input: ${rawInput}
 Symptoms: ${formattedSymptoms}
 Diagnosis: ${diagnosis || "Not yet determined"}
@@ -47,33 +54,50 @@ Return JSON only:
 }
     `;
 
-    const result = await chatCompletion({ systemPrompt, userMessage });
-    const cleaned = result.content.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+  // الموديل (خصوصًا Groq fallback) ممكن يرجع JSON ناقص أو متلخبط من غير سبب واضح
+  // كل شوية، فبدل ما نرجّع نتيجة وهمية بصمت، بنعيد المحاولة لحد 3 مرات قبل
+  // ما نبلّغ الكولر بفشل حقيقي (يخلي الدكتور ميحتاجش يدوس الزرار كذا مرة بنفسه)
+  const MAX_ATTEMPTS = 3;
+  let lastError;
 
-    const allowedUrgency = ["low", "medium", "critical", "unknown"];
-    if (
-      typeof parsed.structuredNote !== "string" ||
-      typeof parsed.suggestedSpecialist !== "string" ||
-      !allowedUrgency.includes(parsed.urgencyLevel)
-    ) {
-      throw new Error("Invalid AI response structure");
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const result = await chatCompletion({ systemPrompt, userMessage });
+      const cleaned = result.content.replace(/```json|```/g, '').trim();
+      // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
+      // الجزء اللي من أول { لحد آخر } بس
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
+
+      const allowedUrgency = ["low", "medium", "critical", "unknown"];
+      if (
+        typeof parsed.structuredNote !== "string" ||
+        typeof parsed.suggestedSpecialist !== "string" ||
+        !allowedUrgency.includes(parsed.urgencyLevel)
+      ) {
+        throw new Error("Invalid AI response structure");
+      }
+
+      return parsed;
+    } catch (error) {
+      lastError = error;
+      console.error(`AI Error (attempt ${attempt}/${MAX_ATTEMPTS}):`, error.message);
+      // لو الخطأ بسبب rate limit، إعادة المحاولة خلال ثواني مش هتنفع
+      // (الموديل هيرفض تاني بنفس السبب) — نوقف على طول ونبلّغ بوضوح
+      if (error.isRateLimit) break;
+      if (attempt < MAX_ATTEMPTS) {
+        await delay(700 * attempt);
+      }
     }
-
-    return parsed;
-
-  } catch (error) {
-    console.error("AI Error:", error);
-    return {
-      error: true,
-      message: "AI request failed",
-      fallback: {
-        structuredNote: "Unable to generate clinical summary",
-        suggestedSpecialist: "General Practitioner",
-        urgencyLevel: "medium",
-      },
-    };
   }
+
+  // كل المحاولات فشلت فعلاً → نرمي الخطأ عشان الكنترولر يرجّع إيرور حقيقي
+  // (مش fallback مزيف) فالـ retry اللي في الفرونت إند يقدر يتصرف صح
+  const finalError = new Error(
+    lastError?.message || "AI request failed after multiple attempts",
+  );
+  if (lastError?.isRateLimit) finalError.isRateLimit = true;
+  throw finalError;
 };
 
 module.exports = { runClinicalRecAgent };

@@ -16,14 +16,11 @@ router.patch(
   renewSubscription
 );
 
-router.get("/me", authMiddleware, getMySubscription);
-
 router.get(
     "/doctors",
     authMiddleware,
     adminMiddleware,
     getDoctorsSubscriptions
 );
-
 
 module.exports = router;

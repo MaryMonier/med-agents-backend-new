@@ -7,6 +7,8 @@ const {
   updateConsultation,
   deleteConsultation,
   getAllConsultationsByDoctor,
+    getConsultationsByDoctorId,   // 
+
   getAIRecommendation,
 } = require("../controllers/consultationController");
 
@@ -19,6 +21,8 @@ router.use(checkSubscription);
 router.route("/").get(getAllConsultations).post(createConsultation);
 router.route("/doctor").get(getAllConsultationsByDoctor)
 router.route("/ai-recommendation").post(getAIRecommendation)
+router.route("/by-doctor/:doctorId").get(getConsultationsByDoctorId);   // 
+
 router
   .route("/:id")
   .get(getConsultationById)

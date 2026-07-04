@@ -79,7 +79,7 @@ const renewSubscription = async (req, res) => {
     endDate.setMonth(endDate.getMonth() + months);
 
     user.subscription.status = "active";
-    user.subscription.plan = plan;
+    user.subscription.plan = plan || user.subscription.plan;
     user.subscription.subscriptionStart = startDate;
     user.subscription.subscriptionEnd = endDate;
 

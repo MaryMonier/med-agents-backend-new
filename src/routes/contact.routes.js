@@ -4,11 +4,10 @@ const adminMiddleware = require("../middleware/admin.middleware");
 const {
   sendMessage,
   getMessages,
-} = require("../controllers/contact.controller");
+  markAsRead,
+  } = require("../controllers/contact.controller");
 
 router.post("/", sendMessage);
-
-
 router.get("/", authMiddleware, adminMiddleware, getMessages);
-
+router.patch("/:id/read", authMiddleware, adminMiddleware, markAsRead);
 module.exports = router;
