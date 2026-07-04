@@ -84,8 +84,10 @@ const getPatientsByDoctorId = async (request, response) => {
     const { page = 1, limit = 10 } = request.query;
     const skip = (page - 1) * limit;
 
-    const totalPatients = await Patient.countDocuments({ createdBy: doctorId });
-    const patients = await Patient.find({ createdBy: doctorId })
+    const filter = { $or: [{ createdBy: doctorId }, { doctors: doctorId }] };
+
+    const totalPatients = await Patient.countDocuments(filter);
+    const patients = await Patient.find(filter)
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
@@ -264,9 +266,14 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId createdAt",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote rawInput followupId createdAt",
       )
       .sort({ createdAt: -1 });
+
+    console.log(
+      `[getPatientHistory] patientId=${patientId} found ${consultations.length} consultations, ` +
+        `first diagnosis="${consultations[0]?.diagnosis}"`,
+    );
 
     const history = await Promise.all(
       consultations.map(async (consultation) => {
@@ -282,6 +289,7 @@ const getPatientHistory = async (req, res) => {
           urgencyLevel: consultation.urgencyLevel,
           suggestedSpecialist: consultation.suggestedSpecialist || null,
           structuredNote: consultation.structuredNote || null,
+          doctorNotes: consultation.rawInput || null,
           isFollowup: !!consultation.followupId, // لو كانت من فولو أب
           prescription: prescription
             ? {

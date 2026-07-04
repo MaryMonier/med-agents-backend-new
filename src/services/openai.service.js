@@ -38,7 +38,7 @@ const chatCompletion = async ({ systemPrompt, userMessage, jsonMode = true }) =>
 
   // Groq fallback
   const response = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+    model: 'openai/gpt-oss-120b',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
@@ -61,7 +61,7 @@ const streamCompletion = async ({ systemPrompt, userMessage, res }) => {
 
   try {
     const client = openai || groq;
-    const model = openai ? 'gpt-4o-mini' : 'llama-3.3-70b-versatile';
+    const model = openai ? 'gpt-4o-mini' : 'openai/gpt-oss-120b';
 
     const stream = await client.chat.completions.create({
       model,

@@ -18,7 +18,7 @@ const callLLM = async (params) => {
     console.log('OpenAI failed, falling back to Groq...');
     return await groqClient.chat.completions.create({
       ...params,
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-120b',
     });
   }
 };

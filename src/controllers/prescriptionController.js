@@ -24,28 +24,32 @@ const decorateMedication = (med) => {
   const plain = med?.toObject ? med.toObject() : med;
   if (!plain) return plain;
 
-  const hasStructuredDosage = plain.dosageAmount !== undefined && plain.dosageUnit !== undefined;
-  const hasStructuredFrequency = plain.frequencyCount !== undefined && plain.frequencyPeriod !== undefined;
-  const hasStructuredDuration = plain.durationValue !== undefined && plain.durationUnit !== undefined;
+  const hasStructuredDosage =
+    plain.dosageAmount !== undefined && plain.dosageUnit !== undefined;
+  const hasStructuredFrequency =
+    plain.frequencyCount !== undefined && plain.frequencyPeriod !== undefined;
+  const hasStructuredDuration =
+    plain.durationValue !== undefined && plain.durationUnit !== undefined;
 
   const dose = hasStructuredDosage
     ? `${plain.dosageAmount}${plain.dosageUnit}`
-    : plain.dose || '';
+    : plain.dose || "";
 
   const frequency = hasStructuredFrequency
     ? `${plain.frequencyCount}x ${plain.frequencyPeriod}`
-    : plain.frequency || '';
+    : plain.frequency || "";
 
   const duration = plain.isChronic
-    ? 'Lifelong (Chronic)'
+    ? "Lifelong (Chronic)"
     : hasStructuredDuration
       ? `${plain.durationValue} ${plain.durationUnit}`
-      : plain.duration || '';
+      : plain.duration || "";
 
   return { ...plain, dose, frequency, duration };
 };
 
-const decorateMedications = (medications = []) => medications.map(decorateMedication);
+const decorateMedications = (medications = []) =>
+  medications.map(decorateMedication);
 
 // ─── Helper: end date for a (non-chronic) medication, given a start date ─────
 const getMedicationEndDate = (startDate, med) => {
@@ -68,11 +72,17 @@ const isMedicationStillActive = (prescriptionCreatedAt, med) => {
 };
 
 // ─── Helper: find ongoing medications for a patient (excluding one prescription) ─
-const findOngoingMedicationConflicts = async (patientId, newMedications, excludePrescriptionId = null) => {
+const findOngoingMedicationConflicts = async (
+  patientId,
+  newMedications,
+  excludePrescriptionId = null,
+) => {
   const query = { patientId };
   if (excludePrescriptionId) query._id = { $ne: excludePrescriptionId };
 
-  const pastPrescriptions = await Prescription.find(query).sort({ createdAt: -1 });
+  const pastPrescriptions = await Prescription.find(query).sort({
+    createdAt: -1,
+  });
 
   const conflicts = [];
   const newNames = newMedications.map((m) => m.name.trim().toLowerCase());
@@ -86,7 +96,8 @@ const findOngoingMedicationConflicts = async (patientId, newMedications, exclude
 
       const matchesName = newNames.includes(med.name.trim().toLowerCase());
       const matchesIngredient =
-        med.activeIngredient && newIngredients.includes(med.activeIngredient.trim().toLowerCase());
+        med.activeIngredient &&
+        newIngredients.includes(med.activeIngredient.trim().toLowerCase());
       if (!matchesName && !matchesIngredient) return;
 
       conflicts.push({
@@ -96,7 +107,9 @@ const findOngoingMedicationConflicts = async (patientId, newMedications, exclude
         consultationId: presc.consultationId,
         prescribedOn: presc.createdAt,
         isChronic: med.isChronic,
-        endsOn: med.isChronic ? null : getMedicationEndDate(presc.createdAt, med),
+        endsOn: med.isChronic
+          ? null
+          : getMedicationEndDate(presc.createdAt, med),
       });
     });
   });
@@ -110,7 +123,11 @@ const findOngoingMedicationConflicts = async (patientId, newMedications, exclude
 // prescription + any still-active medications from the patient's previous
 // prescriptions (the "ongoing conflict" case is folded into this single
 // message instead of being a separate warning), plus allergies and age.
-const runQuickCheckForMedications = async (medications, patient, ongoingConflicts = []) => {
+const runQuickCheckForMedications = async (
+  medications,
+  patient,
+  ongoingConflicts = [],
+) => {
   try {
     const age = calculateAge(patient?.dateOfBirth);
     const allergies = patient?.allergies || [];
@@ -125,12 +142,25 @@ const runQuickCheckForMedications = async (medications, patient, ongoingConflict
       medications.map(async (med, index) => {
         const otherMedsInThisPrescription = medications
           .filter((_, i) => i !== index)
-          .map((m) => ({ name: m.name, activeIngredient: m.activeIngredient || null }));
+          .map((m) => ({
+            name: m.name,
+            activeIngredient: m.activeIngredient || null,
+          }));
 
-        const activeMedications = [...otherMedsInThisPrescription, ...ongoingAsActive];
+        const activeMedications = [
+          ...otherMedsInThisPrescription,
+          ...ongoingAsActive,
+        ];
 
         const result = await runQuickDrugCheck({
-          newDrug: { name: med.name, activeIngredient: med.activeIngredient || null },
+          newDrug: {
+            name: med.name,
+            activeIngredient: med.activeIngredient || null,
+            dosageAmount: med.dosageAmount || null,
+            dosageUnit: med.dosageUnit || null,
+            frequencyCount: med.frequencyCount || null,
+            frequencyPeriod: med.frequencyPeriod || null,
+          },
           activeMedications,
           allergies,
           patientAge: age,
@@ -139,14 +169,20 @@ const runQuickCheckForMedications = async (medications, patient, ongoingConflict
         });
 
         return result?.success ? result.data?.message || null : null;
-      }),
-    );
+    }),
+  );
 
-    return medications.map((med, i) => ({ ...med, quickCheckMessage: results[i] }));
+  return medications.map((med, i) => ({
+    ...med,
+    quickCheckMessage: results[i],
+  }));
   } catch (error) {
     // مهما حصل هنا، السيف الفعلي بتاع الروشتة (الجرعة/التكرار/المدة) أهم
     // من رسالة الـ quick check — فمنسيبش الإكسبشن يوقف عملية الحفظ خالص
-    console.error("Quick check pass failed, saving medications without check messages:", error.message);
+    console.error(
+      "Quick check pass failed, saving medications without check messages:",
+      error.message,
+    );
     return medications.map((med) => ({ ...med, quickCheckMessage: null }));
   }
 };
@@ -222,20 +258,28 @@ const checkPrescriptionSafety = async (req, res, next) => {
     const { patientId, medications } = req.body;
 
     if (!patientId) {
-      return res.status(400).json({ success: false, message: "patientId is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "patientId is required" });
     }
     if (!Array.isArray(medications) || medications.length === 0) {
-      return res.status(400).json({ success: false, message: "medications array is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "medications array is required" });
     }
     if (!medications.every((m) => m.name && m.name.trim())) {
-      return res.status(400).json({ success: false, message: "Each medication must have a name" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Each medication must have a name" });
     }
 
     const patient = await Patient.findById(patientId).select(
       "name gender allergies chronicConditions dateOfBirth",
     );
     if (!patient) {
-      return res.status(404).json({ success: false, message: "Patient not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Patient not found" });
     }
 
     const age = calculateAge(patient.dateOfBirth);
@@ -270,7 +314,10 @@ const createPrescription = async (req, res, next) => {
     const { consultationId, patientId, medications, language } = req.body;
 
     if (!Array.isArray(medications) || medications.length === 0) {
-      return res.status(400).json({ success: false, message: "At least one medication is required" });
+      return res.status(400).json({
+        success: false,
+        message: "At least one medication is required",
+      });
     }
 
     const consultation = await Consultation.findById(consultationId);
@@ -280,7 +327,10 @@ const createPrescription = async (req, res, next) => {
       return next(err);
     }
 
-    if (consultation.doctorId.toString() !== req.user.id.toString()) {
+    if (
+      req.user.role !== "admin" &&
+      consultation.doctorId.toString() !== req.user.id.toString()
+    ) {
       const err = new Error(
         "Not authorized to prescribe for this consultation",
       );
@@ -295,7 +345,10 @@ const createPrescription = async (req, res, next) => {
       return next(err);
     }
 
-    const ongoingConflicts = await findOngoingMedicationConflicts(patientId, medications);
+    const ongoingConflicts = await findOngoingMedicationConflicts(
+      patientId,
+      medications,
+    );
     const medicationsWithQuickCheck = await runQuickCheckForMedications(
       medications,
       patient,
@@ -421,9 +474,10 @@ const getPrescriptionByConsultation = async (req, res, next) => {
       .populate("consultationId", "symptoms diagnosis urgencyLevel");
 
     if (!prescription) {
-      const err = new Error("Prescription not found for this consultation");
-      err.status = 404;
-      return next(err);
+      return res.status(200).json({
+        success: true,
+        data: null,
+      });
     }
 
     res.status(200).json({
@@ -496,6 +550,10 @@ const getPrescriptionById = async (req, res, next) => {
 // ─── Update Prescription ──────────────────────────────────────────────────────
 const updatePrescription = async (req, res, next) => {
   try {
+    console.log(
+      `[updatePrescription] id=${req.params.id} medsCount=${req.body?.medications?.length ?? "n/a"}`,
+    );
+
     const prescription = await Prescription.findById(req.params.id).populate(
       "consultationId",
       "doctorId",
@@ -508,6 +566,7 @@ const updatePrescription = async (req, res, next) => {
     }
 
     if (
+      req.user.role !== "admin" &&
       prescription.consultationId.doctorId.toString() !== req.user.id.toString()
     ) {
       const err = new Error("Not authorized to update this prescription");
@@ -521,7 +580,10 @@ const updatePrescription = async (req, res, next) => {
 
     if (medications) {
       if (!Array.isArray(medications) || medications.length === 0) {
-        return res.status(400).json({ success: false, message: "At least one medication is required" });
+        return res.status(400).json({
+          success: false,
+          message: "At least one medication is required",
+        });
       }
 
       const patient = await Patient.findById(prescription.patientId);
@@ -559,6 +621,7 @@ const updatePrescription = async (req, res, next) => {
       },
     });
   } catch (err) {
+    console.error("[updatePrescription] FAILED:", err.message);
     next(err);
   }
 };
