@@ -2,6 +2,9 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+
+const connectDB = require("./config/db");   // ⬅️  السطر ده
+
 const errorHandler = require("./middleware/errorHandler");
 const patientRouter = require("./routes/patient.router");
 const contactRouter = require("./routes/contact.routes");
@@ -21,6 +24,10 @@ const medicalAgentRouter = require("./routes/medicalAgentRoutes");
 const reportGenRoutes = require("./routes/reportGen.routes");
 
 app.set("trust proxy", 1);
+
+connectDB().catch((err) => {
+  console.error("Failed to connect to DB:", err.message);
+});
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
