@@ -71,10 +71,14 @@ const isMedicationStillActive = (prescriptionCreatedAt, med) => {
   return end.getTime() > Date.now();
 };
 
-// ─── Helper: find ongoing medications for a patient (excluding one prescription) ─
-const findOngoingMedicationConflicts = async (
+// ─── Helper: get ALL currently active medications for a patient ─────────────
+// (from past prescriptions, chronic or duration not yet ended) with their
+// full dosage/frequency/duration info — needed so the Quick Check agent can
+// reason about real interactions/dosage against everything the patient is
+// actually taking right now, not just drugs that happen to share a name with
+// what's being typed in the current prescription.
+const getAllActiveMedicationsForPatient = async (
   patientId,
-  newMedications,
   excludePrescriptionId = null,
 ) => {
   const query = { patientId };
@@ -84,28 +88,17 @@ const findOngoingMedicationConflicts = async (
     createdAt: -1,
   });
 
-  const conflicts = [];
-  const newNames = newMedications.map((m) => m.name.trim().toLowerCase());
-  const newIngredients = newMedications
-    .map((m) => m.activeIngredient?.trim().toLowerCase())
-    .filter(Boolean);
-
+  const active = [];
   pastPrescriptions.forEach((presc) => {
     presc.medications.forEach((med) => {
       if (!isMedicationStillActive(presc.createdAt, med)) return;
-
-      const matchesName = newNames.includes(med.name.trim().toLowerCase());
-      const matchesIngredient =
-        med.activeIngredient &&
-        newIngredients.includes(med.activeIngredient.trim().toLowerCase());
-      if (!matchesName && !matchesIngredient) return;
-
-      conflicts.push({
+      active.push({
         name: med.name,
         activeIngredient: med.activeIngredient || null,
-        prescriptionId: presc._id,
-        consultationId: presc.consultationId,
-        prescribedOn: presc.createdAt,
+        dosageAmount: med.dosageAmount ?? null,
+        dosageUnit: med.dosageUnit ?? null,
+        frequencyCount: med.frequencyCount ?? null,
+        frequencyPeriod: med.frequencyPeriod ?? null,
         isChronic: med.isChronic,
         endsOn: med.isChronic
           ? null
@@ -114,9 +107,10 @@ const findOngoingMedicationConflicts = async (
     });
   });
 
-  return conflicts;
+  return active;
 };
 
+// ─── Helper: find ongoing medications for a patient (excluding one prescription) ─
 // ─── Helper: run the Quick Drug Check agent for every medication in a
 // prescription, attaching a single short sentence (or null) to each one.
 // Each medication is checked against: the OTHER medications in this same
@@ -126,30 +120,33 @@ const findOngoingMedicationConflicts = async (
 const runQuickCheckForMedications = async (
   medications,
   patient,
-  ongoingConflicts = [],
+  allActiveMedications = [],
 ) => {
   try {
     const age = calculateAge(patient?.dateOfBirth);
     const allergies = patient?.allergies || [];
 
-    const ongoingAsActive = ongoingConflicts.map((c) => ({
-      name: c.name,
-      activeIngredient: c.activeIngredient || null,
-      isChronic: c.isChronic,
-    }));
-
     const results = await Promise.all(
       medications.map(async (med, index) => {
+        // باقي الأدوية في نفس الروشتة اللي بتتكتب دلوقتي (بالجرعة والمدة كاملة)
         const otherMedsInThisPrescription = medications
           .filter((_, i) => i !== index)
           .map((m) => ({
             name: m.name,
             activeIngredient: m.activeIngredient || null,
+            dosageAmount: m.dosageAmount ?? null,
+            dosageUnit: m.dosageUnit ?? null,
+            frequencyCount: m.frequencyCount ?? null,
+            frequencyPeriod: m.frequencyPeriod ?? null,
+            isChronic: !!m.isChronic,
+            durationValue: m.durationValue ?? null,
+            durationUnit: m.durationUnit ?? null,
           }));
 
+        // كل الأدوية الشغالة فعليًا من روشتات سابقة (كرونيك أو لسه معداش معادها)
         const activeMedications = [
           ...otherMedsInThisPrescription,
-          ...ongoingAsActive,
+          ...allActiveMedications,
         ];
 
         const result = await runQuickDrugCheck({
@@ -160,6 +157,9 @@ const runQuickCheckForMedications = async (
             dosageUnit: med.dosageUnit || null,
             frequencyCount: med.frequencyCount || null,
             frequencyPeriod: med.frequencyPeriod || null,
+            isChronic: !!med.isChronic,
+            durationValue: med.durationValue ?? null,
+            durationUnit: med.durationUnit ?? null,
           },
           activeMedications,
           allergies,
@@ -169,13 +169,13 @@ const runQuickCheckForMedications = async (
         });
 
         return result?.success ? result.data?.message || null : null;
-    }),
-  );
+      }),
+    );
 
-  return medications.map((med, i) => ({
-    ...med,
-    quickCheckMessage: results[i],
-  }));
+    return medications.map((med, i) => ({
+      ...med,
+      quickCheckMessage: results[i],
+    }));
   } catch (error) {
     // مهما حصل هنا، السيف الفعلي بتاع الروشتة (الجرعة/التكرار/المدة) أهم
     // من رسالة الـ quick check — فمنسيبش الإكسبشن يوقف عملية الحفظ خالص
@@ -284,16 +284,15 @@ const checkPrescriptionSafety = async (req, res, next) => {
 
     const age = calculateAge(patient.dateOfBirth);
 
-    const ongoingConflicts = await findOngoingMedicationConflicts(
+    const allActiveMedications = await getAllActiveMedicationsForPatient(
       patientId,
-      medications,
       req.body.excludePrescriptionId || null,
     );
 
     const checkedMedications = await runQuickCheckForMedications(
       medications,
       patient,
-      ongoingConflicts,
+      allActiveMedications,
     );
 
     return res.status(200).json({
@@ -345,14 +344,12 @@ const createPrescription = async (req, res, next) => {
       return next(err);
     }
 
-    const ongoingConflicts = await findOngoingMedicationConflicts(
-      patientId,
-      medications,
-    );
+    const allActiveMedications =
+      await getAllActiveMedicationsForPatient(patientId);
     const medicationsWithQuickCheck = await runQuickCheckForMedications(
       medications,
       patient,
-      ongoingConflicts,
+      allActiveMedications,
     );
 
     const prescription = await Prescription.create({
@@ -588,16 +585,15 @@ const updatePrescription = async (req, res, next) => {
 
       const patient = await Patient.findById(prescription.patientId);
 
-      const ongoingConflicts = await findOngoingMedicationConflicts(
+      const allActiveMedications = await getAllActiveMedicationsForPatient(
         prescription.patientId,
-        medications,
         prescription._id,
       );
 
       updatedMedications = await runQuickCheckForMedications(
         medications,
         patient,
-        ongoingConflicts,
+        allActiveMedications,
       );
     }
 
