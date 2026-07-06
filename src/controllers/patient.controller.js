@@ -9,19 +9,26 @@ const Prescription = require("../models/Prescription");
 const decorateMedicationForDisplay = (med) => {
   if (!med) return med;
 
-  const hasStructuredDosage = med.dosageAmount !== undefined && med.dosageUnit !== undefined;
-  const hasStructuredFrequency = med.frequencyCount !== undefined && med.frequencyPeriod !== undefined;
-  const hasStructuredDuration = med.durationValue !== undefined && med.durationUnit !== undefined;
+  const hasStructuredDosage =
+    med.dosageAmount !== undefined && med.dosageUnit !== undefined;
+  const hasStructuredFrequency =
+    med.frequencyCount !== undefined && med.frequencyPeriod !== undefined;
+  const hasStructuredDuration =
+    med.durationValue !== undefined && med.durationUnit !== undefined;
 
   return {
     ...med,
-    dosage: hasStructuredDosage ? `${med.dosageAmount}${med.dosageUnit}` : med.dosage || med.dose || '',
-    frequency: hasStructuredFrequency ? `${med.frequencyCount}x ${med.frequencyPeriod}` : med.frequency || '',
+    dosage: hasStructuredDosage
+      ? `${med.dosageAmount}${med.dosageUnit}`
+      : med.dosage || med.dose || "",
+    frequency: hasStructuredFrequency
+      ? `${med.frequencyCount}x ${med.frequencyPeriod}`
+      : med.frequency || "",
     duration: med.isChronic
-      ? 'Lifelong (Chronic)'
+      ? "Lifelong (Chronic)"
       : hasStructuredDuration
         ? `${med.durationValue} ${med.durationUnit}`
-        : med.duration || '',
+        : med.duration || "",
   };
 };
 
@@ -48,7 +55,9 @@ const getAllPatientsByDoctor = async (request, response) => {
       });
     }
     const totalPatients = await Patient.countDocuments({ createdBy });
-    const allPatients = await Patient.find({$or:[{ createdBy},{ doctors:createdBy}]})
+    const allPatients = await Patient.find({
+      $or: [{ createdBy }, { doctors: createdBy }],
+    })
       .skip(skip)
       .limit(Number(limit));
 
@@ -266,7 +275,7 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote rawInput followupId createdAt",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote rawInput followUpDate followupId createdAt",
       )
       .sort({ createdAt: -1 });
 
@@ -290,6 +299,7 @@ const getPatientHistory = async (req, res) => {
           suggestedSpecialist: consultation.suggestedSpecialist || null,
           structuredNote: consultation.structuredNote || null,
           doctorNotes: consultation.rawInput || null,
+          followUpDate: consultation.followUpDate || null,
           isFollowup: !!consultation.followupId, // لو كانت من فولو أب
           prescription: prescription
             ? {

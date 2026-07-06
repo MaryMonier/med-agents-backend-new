@@ -27,6 +27,11 @@ const addDiagnosisToChronicConditions = async (patientId, diagnosis) => {
   const patient = await Patient.findById(patientId).select("chronicConditions");
   if (!patient) return;
 
+  // TEMP DEBUG — هنشيلها بعد ما نلاقي السبب
+  console.log(
+    `[addDiagnosisToChronicConditions][DEBUG] patientId=${patientId} incoming="${trimmed}" existing=${JSON.stringify(patient.chronicConditions)}`,
+  );
+
   // مش بس exact match — بنشيك كمان لو التشخيص الجديد جزء من حالة مسجلة
   // بالفعل أو العكس (زي "Diabetes" الموجودة و"Type 2 Diabetes" الجديدة)
   // عشان مانضيفش نفس المرض تاني بصياغة مختلفة شوية
@@ -38,11 +43,55 @@ const addDiagnosisToChronicConditions = async (patientId, diagnosis) => {
       normalizedNew.includes(normalizedExisting)
     );
   });
+
+  // TEMP DEBUG
+  console.log(
+    `[addDiagnosisToChronicConditions][DEBUG] alreadyExists=${alreadyExists}`,
+  );
+
   if (alreadyExists) return;
 
   await Patient.findByIdAndUpdate(patientId, {
     $push: { chronicConditions: trimmed },
   });
+};
+
+// عكس الدالة اللي فوق: لو الدكتور شال علامة الصح من "Chronic Disease" وهو
+// بيعدّل كونسلتيشن كانت متعلّمة كمرض مزمن قبل كده، لازم نشيل التشخيص ده من
+// Patient.chronicConditions — بنفس منطق الـ near-duplicate matching عشان
+// نلاقي الصيغة الصحيحة المسجلة حتى لو مش مطابقة حرفيًا
+const removeDiagnosisFromChronicConditions = async (patientId, diagnosis) => {
+  if (!diagnosis || !diagnosis.trim()) return;
+  const trimmed = diagnosis.trim();
+  const normalize = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalizedTarget = normalize(trimmed);
+
+  const patient = await Patient.findById(patientId).select("chronicConditions");
+  if (!patient || !Array.isArray(patient.chronicConditions)) return;
+
+  const remaining = patient.chronicConditions.filter((c) => {
+    const normalizedExisting = normalize(c);
+    const matches =
+      normalizedExisting === normalizedTarget ||
+      normalizedExisting.includes(normalizedTarget) ||
+      normalizedTarget.includes(normalizedExisting);
+    return !matches;
+  });
+
+  if (remaining.length === patient.chronicConditions.length) return; // مفيش حاجة اتشالت
+
+  await Patient.findByIdAndUpdate(patientId, {
+    $set: { chronicConditions: remaining },
+  });
+};
+
+// بترجّع chronicConditions المحدّثة لبيشنت معيّن — بنستخدمها عشان نبعت
+// النسخة النهائية (بعد أي إضافة/إزالة) في الـ response، فالفرونت يقدر
+// يعمل dispatch على طول لـ redux (Patient History) من غير ما يستنى refetch
+const getChronicConditions = async (patientId) => {
+  if (!patientId) return undefined;
+  const patient = await Patient.findById(patientId).select("chronicConditions");
+  return patient?.chronicConditions;
 };
 
 const createConsultation = async (req, res) => {
@@ -123,8 +172,10 @@ const createConsultation = async (req, res) => {
       followupId: followupId || null,
     });
 
+    let chronicConditions;
     if (isChronic) {
       await addDiagnosisToChronicConditions(patientId, diagnosis);
+      chronicConditions = await getChronicConditions(patientId);
     }
 
     // لو الكونسلتيشن دي من فولو أب → غير status الفولو أب لـ confirmed،
@@ -158,6 +209,7 @@ const createConsultation = async (req, res) => {
       success: true,
       message: "Consultation created successfully",
       data: consultation,
+      chronicConditions,
     });
   } catch (error) {
     res.status(error.isRateLimit ? 429 : 500).json({
@@ -258,6 +310,18 @@ const updateConsultation = async (req, res) => {
       `[updateConsultation] id=${req.params.id} payload keys=${Object.keys(req.body).join(",")}`,
     );
 
+    // بنحتاج نعرف حالة isChronic والتشخيص القديمين قبل ما نعمل الـ update،
+    // عشان لو الدكتور شال علامة الصح، نعرف نشيل التشخيص الصح (القديم) من
+    // chronicConditions — مش التشخيص الجديد اللي ممكن يكون اتغيّر في نفس التعديل
+    const beforeUpdate = await Consultation.findById(req.params.id).select(
+      "isChronic diagnosis patientId",
+    );
+    if (!beforeUpdate) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Consultation not found" });
+    }
+
     // لو followUpDate جاية فاضية (يعني الدكتور مسحها عن قصد)، لازم نحولها
     // لـ null مش نسيبها string فاضي — عشان Mongoose هيفشل وهو بيحاول يحوّلها
     // لـ Date ويرمي CastError
@@ -281,11 +345,27 @@ const updateConsultation = async (req, res) => {
       `[updateConsultation] saved OK, new diagnosis="${consultation.diagnosis}"`,
     );
 
-    if (req.body.isChronic) {
-      await addDiagnosisToChronicConditions(
-        consultation.patientId,
-        req.body.diagnosis ?? consultation.diagnosis,
-      );
+    // بنجهّز المتغيّر ده عشان لو فعلاً حصل تغيير (إضافة أو إزالة) في
+    // chronicConditions، نبعت النسخة النهائية في الـ response بالظبط زي
+    // ما بيحصل في createConsultation — عشان الفرونت يعمل dispatch لـ
+    // redux على طول من غير ما يستنى refetch كامل لـ Patient History
+    let chronicConditions;
+    if ("isChronic" in req.body) {
+      if (req.body.isChronic) {
+        await addDiagnosisToChronicConditions(
+          consultation.patientId,
+          req.body.diagnosis ?? consultation.diagnosis,
+        );
+        chronicConditions = await getChronicConditions(consultation.patientId);
+      } else if (beforeUpdate.isChronic) {
+        // كانت متعلّمة كمرض مزمن قبل التعديل ودلوقتي اتشالت العلامة — نشيل
+        // التشخيص (القديم، قبل أي تعديل عليه في نفس الطلب) من الليستة
+        await removeDiagnosisFromChronicConditions(
+          beforeUpdate.patientId,
+          beforeUpdate.diagnosis,
+        );
+        chronicConditions = await getChronicConditions(consultation.patientId);
+      }
     }
 
     // لو الدكتور حدد (أو غيّر) تاريخ فولو أب وهو بيعدّل الكونسلتيشن/الفولو
@@ -322,7 +402,11 @@ const updateConsultation = async (req, res) => {
       }
     }
 
-    res.status(200).json({ success: true, data: consultation });
+    res.status(200).json({
+      success: true,
+      data: consultation,
+      chronicConditions,
+    });
   } catch (error) {
     console.error("[updateConsultation] FAILED:", error.message);
     res.status(500).json({ success: false, message: error.message });
