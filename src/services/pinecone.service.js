@@ -1,19 +1,10 @@
 const { Pinecone } = require('@pinecone-database/pinecone');
-const OpenAI = require('openai');
-const { PINECONE_API_KEY, OPENAI_API_KEY } = require('../config/env');
+const { PINECONE_API_KEY } = require('../config/env');
+const { getEmbedding } = require('./embedding.service');
 
 const pinecone = new Pinecone({ apiKey: PINECONE_API_KEY });
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 const INDEX_NAME = 'med-agents';
-
-const getEmbedding = async (text) => {
-  const response = await openai.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: text,
-  });
-  return response.data[0].embedding;
-};
 
 const upsertVectors = async (vectors) => {
   const index = pinecone.index(INDEX_NAME);
