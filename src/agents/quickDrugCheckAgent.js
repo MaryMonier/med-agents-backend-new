@@ -1,24 +1,45 @@
-const OpenAI = require("openai");
+const { GoogleGenAI } = require("@google/genai");
 const Groq = require("groq-sdk");
-const { OPENAI_API_KEY, GROQ_API_KEY } = require("../config/env");
+const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
 const { checkInteractions } = require("../services/openFDA.service");
 
-const openaiClient = OPENAI_API_KEY
-  ? new OpenAI({ apiKey: OPENAI_API_KEY })
-  : null;
-const groqClient = new Groq({ apiKey: GROQ_API_KEY });
+const gemini = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 
-const callLLM = async (params) => {
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GROQ_MODEL = "openai/gpt-oss-120b";
+
+// بياخد نفس شكل الـ params القديم (messages: [{role: 'system', ...}, {role: 'user', ...}])
+// عشان أقل تعديل ممكن في باقي الكود، وبيرجع نفس شكل الرد بتاع OpenAI/Groq
+// ( response.choices[0].message.content ) عشان الكود اللي بعده متعديلش.
+const callLLM = async ({ messages, temperature, max_tokens }) => {
+  const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
+  const userMessage = messages.find((m) => m.role === "user")?.content || "";
+
   try {
-    return await openaiClient.chat.completions.create({
-      ...params,
-      model: "gpt-4o-mini",
+    if (!gemini) throw new Error("Gemini API key مش موجود");
+
+    const response = await gemini.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: userMessage,
+      config: {
+        systemInstruction: systemPrompt,
+        temperature,
+        maxOutputTokens: max_tokens,
+      },
     });
+
+    return { choices: [{ message: { content: response.text } }] };
   } catch (err) {
-    console.log("OpenAI failed, falling back to Groq...");
-    return await groqClient.chat.completions.create({
-      ...params,
-      model: "openai/gpt-oss-120b",
+    console.log("Gemini failed, falling back to Groq...", err.message);
+
+    if (!groq) throw new Error("لا Gemini ولا Groq شغالين");
+
+    return await groq.chat.completions.create({
+      messages,
+      temperature,
+      max_tokens,
+      model: GROQ_MODEL,
     });
   }
 };
