@@ -3,9 +3,7 @@ const Groq = require("groq-sdk");
 const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
 const { checkInteractions } = require("../services/openFDA.service");
 
-const gemini = GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
-  : null;
+const gemini = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 
 const GEMINI_MODEL = "gemini-2.5-flash";
@@ -21,12 +19,7 @@ const extractJson = (text) => {
 // بياخد نفس شكل الـ params القديم (messages: [{role: 'system', ...}, {role: 'user', ...}])
 // عشان أقل تعديل ممكن في باقي الكود، وبيرجع نفس شكل الرد بتاع OpenAI/Groq
 // ( response.choices[0].message.content ) عشان الكود اللي بعده متعديلش.
-const callLLM = async ({
-  messages,
-  temperature,
-  max_tokens,
-  jsonMode = false,
-}) => {
+const callLLM = async ({ messages, temperature, max_tokens, jsonMode = false }) => {
   const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
   const userMessage = messages.find((m) => m.role === "user")?.content || "";
 
@@ -62,8 +55,7 @@ const callLLM = async ({
 
 // اسم الدواء للعرض، مع المادة الفعالة بين قوسين لو موجودة ومختلفة عن اسم البراند
 const formatDrugLabel = (drug) =>
-  drug.activeIngredient &&
-  drug.activeIngredient.toLowerCase() !== drug.name.toLowerCase()
+  drug.activeIngredient && drug.activeIngredient.toLowerCase() !== drug.name.toLowerCase()
     ? `${drug.name} (${drug.activeIngredient})`
     : drug.name;
 
@@ -104,9 +96,7 @@ const runQuickDrugCheck = async ({
       medications.length > 1 ||
       allergies.length > 0 ||
       patientAge !== null ||
-      medications.some(
-        (m) => m.dosageAmount !== undefined && m.dosageAmount !== null,
-      );
+      medications.some((m) => m.dosageAmount !== undefined && m.dosageAmount !== null);
 
     if (!hasAnyRiskFactor) {
       return {
@@ -126,9 +116,7 @@ const runQuickDrugCheck = async ({
     const fdaLookupNames = medications.flatMap((m) =>
       [m.name, m.activeIngredient].filter(Boolean),
     );
-    const fdaData = await checkInteractions(
-      fdaLookupNames.map((name) => ({ name })),
-    );
+    const fdaData = await checkInteractions(fdaLookupNames.map((name) => ({ name })));
     const fdaContext = fdaData
       .map((drug) => `${drug.name}: ${drug.interactions || "no data"}`)
       .join("\n");
@@ -141,9 +129,7 @@ const runQuickDrugCheck = async ({
         const dose =
           m.dosageAmount !== undefined && m.dosageAmount !== null
             ? `${m.dosageAmount}${m.dosageUnit || ""}${
-                m.frequencyCount
-                  ? ` × ${m.frequencyCount} ${m.frequencyPeriod || "per day"}`
-                  : ""
+                m.frequencyCount ? ` × ${m.frequencyCount} ${m.frequencyPeriod || "per day"}` : ""
               }`
             : "dose not specified";
         return `${i + 1}. Active substance: ${substanceOf(m)} | Product/brand name on label: "${m.name}" | Dose: ${dose}${m.isChronic ? " | chronic" : ""}`;
@@ -217,11 +203,7 @@ STRICT RULES:
           r.drug?.toLowerCase() === label.toLowerCase(),
       );
       return found
-        ? {
-            drug: label,
-            hasIssue: !!found.hasIssue,
-            message: found.message || null,
-          }
+        ? { drug: label, hasIssue: !!found.hasIssue, message: found.message || null }
         : { drug: label, hasIssue: false, message: null };
     });
 
