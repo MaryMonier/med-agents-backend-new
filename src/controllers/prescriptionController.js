@@ -110,13 +110,21 @@ const getAllActiveMedicationsForPatient = async (
   return active;
 };
 
-// ─── Helper: find ongoing medications for a patient (excluding one prescription) ─
+// ─── Helper: build the display label used to match an AI result back to its
+// medication (must match formatDrugLabel() inside quickDrugCheckAgent.js) ────
+const buildDrugLabel = (med) =>
+  med.activeIngredient &&
+  med.activeIngredient.toLowerCase() !== med.name.toLowerCase()
+    ? `${med.name} (${med.activeIngredient})`
+    : med.name;
+
 // ─── Helper: run the Quick Drug Check agent for every medication in a
-// prescription, attaching a single short sentence (or null) to each one.
-// Each medication is checked against: the OTHER medications in this same
+// prescription in ONE single batched request (instead of one request PER
+// medication), attaching a single short sentence (or null) to each one.
+// Every medication is checked against: the OTHER medications in this same
 // prescription + any still-active medications from the patient's previous
-// prescriptions (the "ongoing conflict" case is folded into this single
-// message instead of being a separate warning), plus allergies and age.
+// prescriptions, plus allergies and age — all sent together in one call to
+// cut down on both request count and repeated token overhead.
 const runQuickCheckForMedications = async (
   medications,
   patient,
@@ -126,55 +134,52 @@ const runQuickCheckForMedications = async (
     const age = calculateAge(patient?.dateOfBirth);
     const allergies = patient?.allergies || [];
 
-    const results = await Promise.all(
-      medications.map(async (med, index) => {
-        // باقي الأدوية في نفس الروشتة اللي بتتكتب دلوقتي (بالجرعة والمدة كاملة)
-        const otherMedsInThisPrescription = medications
-          .filter((_, i) => i !== index)
-          .map((m) => ({
-            name: m.name,
-            activeIngredient: m.activeIngredient || null,
-            dosageAmount: m.dosageAmount ?? null,
-            dosageUnit: m.dosageUnit ?? null,
-            frequencyCount: m.frequencyCount ?? null,
-            frequencyPeriod: m.frequencyPeriod ?? null,
-            isChronic: !!m.isChronic,
-            durationValue: m.durationValue ?? null,
-            durationUnit: m.durationUnit ?? null,
-          }));
+    // أدوية الروشتة الحالية اللي بتتكتب دلوقتي (اللي هنرجعلها quickCheckMessage)
+    const currentMeds = medications.map((m) => ({
+      name: m.name,
+      activeIngredient: m.activeIngredient || null,
+      dosageAmount: m.dosageAmount ?? null,
+      dosageUnit: m.dosageUnit ?? null,
+      frequencyCount: m.frequencyCount ?? null,
+      frequencyPeriod: m.frequencyPeriod ?? null,
+      isChronic: !!m.isChronic,
+    }));
 
-        // كل الأدوية الشغالة فعليًا من روشتات سابقة (كرونيك أو لسه معداش معادها)
-        const activeMedications = [
-          ...otherMedsInThisPrescription,
-          ...allActiveMedications,
-        ];
+    // أدوية شغالة فعليًا من روشتات سابقة (كرونيك أو لسه معداش معادها) — بتتبعت
+    // كـ سياق إضافي في نفس الـ request عشان الـ AI يكتشف تعارض معاها، بس
+    // مش هنرجع quickCheckMessage ليها هي نفسها (هي مش بتتحفظ دلوقتي).
+    const historicalMeds = allActiveMedications.map((m) => ({
+      name: m.name,
+      activeIngredient: m.activeIngredient || null,
+      dosageAmount: m.dosageAmount ?? null,
+      dosageUnit: m.dosageUnit ?? null,
+      frequencyCount: m.frequencyCount ?? null,
+      frequencyPeriod: m.frequencyPeriod ?? null,
+      isChronic: !!m.isChronic,
+    }));
 
-        const result = await runQuickDrugCheck({
-          newDrug: {
-            name: med.name,
-            activeIngredient: med.activeIngredient || null,
-            dosageAmount: med.dosageAmount || null,
-            dosageUnit: med.dosageUnit || null,
-            frequencyCount: med.frequencyCount || null,
-            frequencyPeriod: med.frequencyPeriod || null,
-            isChronic: !!med.isChronic,
-            durationValue: med.durationValue ?? null,
-            durationUnit: med.durationUnit ?? null,
-          },
-          activeMedications,
-          allergies,
-          patientAge: age,
-          patientGender: patient?.gender || null,
-          language: "en",
-        });
+    // request واحد بس لكل الأدوية مع بعض، بدل ما نعمل request لكل دواء لوحده
+    const result = await runQuickDrugCheck({
+      medications: [...currentMeds, ...historicalMeds],
+      allergies,
+      patientAge: age,
+      patientGender: patient?.gender || null,
+      language: "en",
+    });
 
-        return result?.success ? result.data?.message || null : null;
-      }),
-    );
+    const messagesByLabel = new Map();
+    if (result?.success) {
+      (result.data?.results || []).forEach((r) => {
+        if (r.drug) messagesByLabel.set(r.drug.toLowerCase(), r.message || null);
+      });
+    }
 
-    return medications.map((med, i) => ({
+    // نرجع quickCheckMessage بس للأدوية اللي في الروشتة الحالية (اللي هتتحفظ)،
+    // مش للأدوية القديمة اللي كانت مجرد سياق
+    return medications.map((med) => ({
       ...med,
-      quickCheckMessage: results[i],
+      quickCheckMessage:
+        messagesByLabel.get(buildDrugLabel(med).toLowerCase()) ?? null,
     }));
   } catch (error) {
     // مهما حصل هنا، السيف الفعلي بتاع الروشتة (الجرعة/التكرار/المدة) أهم

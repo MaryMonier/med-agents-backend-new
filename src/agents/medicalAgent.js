@@ -1,22 +1,53 @@
+const { GoogleGenAI } = require('@google/genai');
 const Groq = require('groq-sdk');
-const OpenAI = require('openai');
-const { GROQ_API_KEY, OPENAI_API_KEY } = require('../config/env');
+const { GEMINI_API_KEY, GROQ_API_KEY } = require('../config/env');
 const { retrieve, formatContext } = require('../services/pinecone.service.js');
 
-const groqClient = new Groq({ apiKey: GROQ_API_KEY });
-const openaiClient = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const gemini = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 
-const callLLM = async (params) => {
+const GEMINI_MODEL = 'gemini-2.5-flash';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
+
+// بياخد نفس شكل params القديم: { messages: [...], temperature, max_tokens }
+// (messages بتحتوي على system + كل تاريخ المحادثة user/assistant)
+// وبيرجع نفس شكل رد OpenAI/Groq (response.choices[0].message.content)
+// عشان باقي الكود (runMedicalAgent) يفضل زي ما هو من غير تعديل.
+const callLLM = async ({ messages, temperature, max_tokens }) => {
+  const systemPrompt = messages.find((m) => m.role === 'system')?.content || '';
+
+  // Gemini بيحتاج الـ conversation history بفورمات مختلف: role 'assistant' -> 'model'
+  const conversation = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
   try {
-    return await openaiClient.chat.completions.create({
-      ...params,
-      model: 'gpt-4o-mini',
+    if (!gemini) throw new Error('Gemini API key مش موجود');
+
+    const response = await gemini.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: conversation,
+      config: {
+        systemInstruction: systemPrompt,
+        temperature,
+        maxOutputTokens: max_tokens,
+      },
     });
+
+    return { choices: [{ message: { content: response.text } }] };
   } catch (err) {
-    console.log('OpenAI failed, falling back to Groq...');
+    console.log('Gemini failed, falling back to Groq...', err.message);
+
+    if (!groqClient) throw new Error('لا Gemini ولا Groq شغالين');
+
     return await groqClient.chat.completions.create({
-      ...params,
-      model: 'openai/gpt-oss-120b',
+      messages,
+      temperature,
+      max_tokens,
+      model: GROQ_MODEL,
     });
   }
 };
