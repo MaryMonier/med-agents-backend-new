@@ -59,13 +59,19 @@ const formatDrugLabel = (drug) =>
     ? `${drug.name} (${drug.activeIngredient})`
     : drug.name;
 
+// الهوية الحقيقية للدواء اللي هنبني عليها كل قرارات السلامة — المادة الفعالة
+// لو موجودة، وإلا الاسم نفسه (لو الدكتورة كتبته يدوي من غير ما تختار من قايمة FDA)
+const substanceOf = (drug) => drug.activeIngredient || drug.name;
+
 // ─── Quick Drug Check (Batched) ─────────────────────────────────────────────
 // بدل ما نبعت request لكل دواء لوحده، بنبعت كل الأدوية الموجودة فعلاً في
 // الروشتة وقت الفحص (كل مرة يتضاف/يتعدل صنف) في request واحد بس، ونرجع نتيجة
 // مستقلة لكل دواء (hasIssue + message) عشان كل صنف يعرض حالته لوحده في الواجهة.
 //
 // بيشيك على: تكرار الدواء، تفاعلات بين الأدوية، حساسية، تعارض مع السن،
-// وجرعة غير مناسبة لسن المريض.
+// وجرعة غير مناسبة لسن المريض — كل ده بالاعتماد على المادة الفعالة (substance)
+// كـ"هوية حقيقية" للدواء، مش على الاسم التجاري (مهم عشان أسماء زي "Low Dose
+// Aspirin" أو "Kids Panadol" متضللش القرار).
 //
 // medications: [{ name, activeIngredient?, dosageAmount?, dosageUnit?,
 //                 frequencyCount?, frequencyPeriod?, isChronic? }, ...]
@@ -115,6 +121,9 @@ const runQuickDrugCheck = async ({
       .map((drug) => `${drug.name}: ${drug.interactions || "no data"}`)
       .join("\n");
 
+    // بنعرض كل دواء بشكل بيفصل "المادة الفعالة" (الهوية الحقيقية) عن "الاسم
+    // التجاري على العلبة" (مجرد تسمية تسويقية) — عشان الموديل يقرأ المادة
+    // الفعالة كأول وأهم حاجة، مش الاسم التجاري
     const medicationsList = medications
       .map((m, i) => {
         const dose =
@@ -123,7 +132,7 @@ const runQuickDrugCheck = async ({
                 m.frequencyCount ? ` × ${m.frequencyCount} ${m.frequencyPeriod || "per day"}` : ""
               }`
             : "dose not specified";
-        return `${i + 1}. ${formatDrugLabel(m)} — ${dose}${m.isChronic ? " (chronic)" : ""}`;
+        return `${i + 1}. Active substance: ${substanceOf(m)} | Product/brand name on label: "${m.name}" | Dose: ${dose}${m.isChronic ? " | chronic" : ""}`;
       })
       .join("\n");
 
@@ -140,15 +149,18 @@ Patient gender: ${genderInfo}
 FDA interaction data:
 ${fdaContext}
 
-For EACH drug in the list above, check ALL of the following:
-1. Is it duplicated in the list (same drug or same active ingredient appears more than once)?
-2. Does it have a dangerous interaction with any OTHER drug in the list (check brand name AND active ingredient)?
-3. Does it conflict with any of the patient's allergies (brand name or active ingredient)?
-4. Is it contraindicated given the patient's age and gender (for example: aspirin or any drug containing aspirin/salicylate in children/teenagers under 18 can cause Reye's syndrome)?
-5. Is its prescribed dose clearly inappropriate for the patient's age (for example, an adult-sized dose given to a young child)? Only flag this if reasonably confident — do not guess exact pediatric mg/kg calculations, and remember some substances (e.g. vitamins) naturally use high numbers in mcg/IU, so a high number alone is not an issue.
+GENERAL PRINCIPLE (applies to ALL checks below, for ANY drug — not just specific examples):
+Each drug above is listed with its "Active substance" (the real pharmacological identity) and its "Product/brand name on label" (just a marketing label). ALWAYS make every safety judgment using the Active substance. The brand name — including marketing words like "Low Dose", "Baby", "Junior", "Kids", "Extra Strength", "Gentle", "Max", etc. — is NOT medical information and must NEVER cause you to relax, skip, or soften a check that would otherwise apply to that active substance. Mentally, judge each drug as if it were only ever called by its Active substance.
+
+For EACH drug in the list above, check ALL of the following (referring to each drug by its Product/brand name in your answer, but judging based on its Active substance):
+1. Is its active substance duplicated in the list (same active substance appears more than once, even under different brand names)?
+2. Does its active substance have a dangerous interaction with any OTHER drug's active substance in the list?
+3. Does its active substance conflict with any of the patient's allergies?
+4. Is its active substance contraindicated given the patient's age and gender (for example: aspirin/acetylsalicylic acid/salicylate in children/teenagers under 18 can cause Reye's syndrome, regardless of dose or branding)?
+5. Is its prescribed dose clearly inappropriate for the patient's age (for example, an adult-sized dose given to a young child)? Only flag this if reasonably confident — do not guess exact pediatric mg/kg calculations, and remember some substances (e.g. vitamins) naturally use high numbers in mcg/IU, so a high number alone is not an issue. (This check is separate from and in addition to check #4 — a drug can be both dosed wrong AND contraindicated by substance at the same time.)
 
 Return ONLY a JSON object, no extra text, no markdown fences, in exactly this shape:
-{"results": [{"drug": "<drug name exactly as listed above>", "hasIssue": true|false, "message": "<ONE short sentence in ${lang}, or null if no issue>"}]}
+{"results": [{"drug": "<the Product/brand name exactly as listed above>", "hasIssue": true|false, "message": "<ONE short sentence in ${lang}, or null if no issue>"}]}
 Return exactly one entry per drug, in the same order as the list above.`;
 
     const response = await callLLM({
@@ -163,7 +175,8 @@ Return exactly one entry per drug, in the same order as the list above.`;
 STRICT RULES:
 - Respond ONLY with a valid JSON object, no markdown, no code fences, no extra text before or after
 - Each "message" must be in ${lang}, ONE short sentence, no bullet points, no headers
-- For an already-duplicated medication, format EXACTLY like: "<Drug> is prescribed more than once"
+- ALWAYS judge every check (duplicate, interaction, allergy, age, dose) using each drug's ACTIVE SUBSTANCE, never its brand/marketing name — marketing words like "Low Dose", "Baby", "Junior", "Extra Strength", "Kids", "Gentle", "Max" etc. must NEVER cause you to relax, skip, or soften any check that would otherwise apply to that active substance, for ANY drug
+- For an already-duplicated medication (same active substance twice), format EXACTLY like: "<Drug> is prescribed more than once"
 - For drug-drug interactions, format EXACTLY like: "<Drug A> can't be used with <Drug B> because <short reason>"
 - For allergy conflicts, format EXACTLY like: "<Drug> can't be used because patient is allergic to <allergen>"
 - For age-related issues, format EXACTLY like: "<Drug> can't be used at age <age> because <short reason>"
@@ -180,11 +193,14 @@ STRICT RULES:
     const parsed = JSON.parse(extractJson(raw));
 
     // نتأكد إن كل دواء في القايمة الأصلية له نتيجة، حتى لو الموديل نسي واحد
-    // (fallback: نعتبره "مفيش مشكلة" بدل ما نكسر الواجهة)
+    // (fallback: نعتبره "مفيش مشكلة" بدل ما نكسر الواجهة). بنقارن سواء بالاسم
+    // التجاري أو بالـ label الكامل عشان أي فرق بسيط في الرد مايكسرش الربط.
     const results = medications.map((m) => {
       const label = formatDrugLabel(m);
       const found = parsed.results?.find(
-        (r) => r.drug?.toLowerCase() === label.toLowerCase(),
+        (r) =>
+          r.drug?.toLowerCase() === m.name.toLowerCase() ||
+          r.drug?.toLowerCase() === label.toLowerCase(),
       );
       return found
         ? { drug: label, hasIssue: !!found.hasIssue, message: found.message || null }
