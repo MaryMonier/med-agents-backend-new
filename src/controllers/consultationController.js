@@ -189,13 +189,17 @@ const createConsultation = async (req, res) => {
           status: "confirmed",
           instructions: consultation.structuredNote || rawInput,
           completionConsultationId: consultation._id,
+          // تاريخ اليوم الفعلي اللي اتكملت فيه الزيارة - مش بنلمس scheduledDate
+          // الأصلي خالص عشان يفضل بيمثل الميعاد المجدول زي ما هو
+          completedAt: new Date(),
         },
       });
     }
 
     // لو الدكتور حدد تاريخ فولو أب جديد، اعمل Followup تلقائي
+    let newFollowUp = null;
     if (followUpDate) {
-      await Followup.create({
+      newFollowUp = await Followup.create({
         consultationId: consultation._id,
         patientId,
         doctorId: req.user.id,
@@ -210,6 +214,7 @@ const createConsultation = async (req, res) => {
       message: "Consultation created successfully",
       data: consultation,
       chronicConditions,
+      newFollowUp,
     });
   } catch (error) {
     res.status(error.isRateLimit ? 429 : 500).json({
@@ -375,6 +380,7 @@ const updateConsultation = async (req, res) => {
     // بنفرّق بين "الحقل مش موجود في الطلب خالص" (تعديل تاني مالوش دعوة
     // بالفولو أب، فمنلمسهاش) و"الحقل موجود لكن فاضي" (الدكتور مسح التاريخ
     // عن قصد، فلازم نلغي أي فولو أب pending كانت متجدولة)
+    let newFollowUp = null;
     if ("followUpDate" in req.body) {
       const existingPendingFollowup = await Followup.findOne({
         consultationId: consultation._id,
@@ -386,8 +392,9 @@ const updateConsultation = async (req, res) => {
           // لو فيه فولو أب pending بالفعل مربوطة بالكونسلتيشن دي، بس حدّث تاريخها
           existingPendingFollowup.scheduledDate = req.body.followUpDate;
           await existingPendingFollowup.save();
+          newFollowUp = existingPendingFollowup;
         } else {
-          await Followup.create({
+          newFollowUp = await Followup.create({
             consultationId: consultation._id,
             patientId: consultation.patientId,
             doctorId: req.user.id,
@@ -402,10 +409,28 @@ const updateConsultation = async (req, res) => {
       }
     }
 
+    // لو الكونسلتيشن دي جايه أصلاً من إكمال فولو أب (يعني فيها followupId)،
+    // لازم نقفل الفولو أب المصدر دي هنا كمان بالظبط زي ما بيحصل في
+    // createConsultation - من قبل كده مكانش بيحصل خالص هنا، فالفرونت كان
+    // مضطر يعمل نداء منفصل (updateFollowUp) وبيكتب فوق scheduledDate
+    // بالغلط بدل ما يسجل completedAt
+    if (req.body.followupId) {
+      const sourceFollowup = await Followup.findById(req.body.followupId);
+      if (sourceFollowup && !sourceFollowup.completedAt) {
+        sourceFollowup.status = "confirmed";
+        sourceFollowup.instructions =
+          consultation.structuredNote || consultation.rawInput;
+        sourceFollowup.completionConsultationId = consultation._id;
+        sourceFollowup.completedAt = new Date();
+        await sourceFollowup.save();
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: consultation,
       chronicConditions,
+      newFollowUp,
     });
   } catch (error) {
     console.error("[updateConsultation] FAILED:", error.message);
