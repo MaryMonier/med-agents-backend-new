@@ -2,6 +2,7 @@ const { GoogleGenAI } = require("@google/genai");
 const Groq = require("groq-sdk");
 const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
 const { checkInteractions } = require("../services/openFDA.service");
+const { buildCacheKey, getCached, setCached } = require("../services/aiCache.service"); // ✅ جديد
 
 const gemini = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
@@ -9,16 +10,11 @@ const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 const GEMINI_MODEL = "gemini-2.5-flash";
 const GROQ_MODEL = "openai/gpt-oss-120b";
 
-// لو الموديل (خصوصًا Groq fallback) رجّع كلام زيادة قبل/بعد الـ JSON، بنحاول
-// نلقط الـ object الأول باستخدام regex بسيط
 const extractJson = (text) => {
   const match = text.match(/\{[\s\S]*\}/);
   return match ? match[0] : text;
 };
 
-// بياخد نفس شكل الـ params القديم (messages: [{role: 'system', ...}, {role: 'user', ...}])
-// عشان أقل تعديل ممكن في باقي الكود، وبيرجع نفس شكل الرد بتاع OpenAI/Groq
-// ( response.choices[0].message.content ) عشان الكود اللي بعده متعديلش.
 const callLLM = async ({ messages, temperature, max_tokens, jsonMode = false }) => {
   const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
   const userMessage = messages.find((m) => m.role === "user")?.content || "";
@@ -53,29 +49,32 @@ const callLLM = async ({ messages, temperature, max_tokens, jsonMode = false }) 
   }
 };
 
-// اسم الدواء للعرض، مع المادة الفعالة بين قوسين لو موجودة ومختلفة عن اسم البراند
 const formatDrugLabel = (drug) =>
   drug.activeIngredient && drug.activeIngredient.toLowerCase() !== drug.name.toLowerCase()
     ? `${drug.name} (${drug.activeIngredient})`
     : drug.name;
 
-// الهوية الحقيقية للدواء اللي هنبني عليها كل قرارات السلامة — المادة الفعالة
-// لو موجودة، وإلا الاسم نفسه (لو الدكتورة كتبته يدوي من غير ما تختار من قايمة FDA)
 const substanceOf = (drug) => drug.activeIngredient || drug.name;
 
-// ─── Quick Drug Check (Batched) ─────────────────────────────────────────────
-// بدل ما نبعت request لكل دواء لوحده، بنبعت كل الأدوية الموجودة فعلاً في
-// الروشتة وقت الفحص (كل مرة يتضاف/يتعدل صنف) في request واحد بس، ونرجع نتيجة
-// مستقلة لكل دواء (hasIssue + message) عشان كل صنف يعرض حالته لوحده في الواجهة.
-//
-// بيشيك على: تكرار الدواء، تفاعلات بين الأدوية، حساسية، تعارض مع السن،
-// وجرعة غير مناسبة لسن المريض — كل ده بالاعتماد على المادة الفعالة (substance)
-// كـ"هوية حقيقية" للدواء، مش على الاسم التجاري (مهم عشان أسماء زي "Low Dose
-// Aspirin" أو "Kids Panadol" متضللش القرار).
-//
-// medications: [{ name, activeIngredient?, dosageAmount?, dosageUnit?,
-//                 frequencyCount?, frequencyPeriod?, isChronic? }, ...]
-//               ← كل الأدوية الحالية في الروشتة (نفس أسماء الحقول في الـ DB)
+// ✅ نسخة "منظّمة" من مدخلات الفحص، بترتيب ثابت، عشان نبني منها الـ cache key
+// بغض النظر عن ترتيب الأدوية أو الحساسيات وقت الإدخال
+const buildCachePayload = ({ medications, allergies, patientAge, patientGender, language }) => ({
+  medications: medications
+    .map((m) => ({
+      substance: substanceOf(m).toLowerCase().trim(),
+      dose: m.dosageAmount ?? null,
+      unit: m.dosageUnit ?? null,
+      freqCount: m.frequencyCount ?? null,
+      freqPeriod: m.frequencyPeriod ?? null,
+      chronic: !!m.isChronic,
+    }))
+    .sort((a, b) => a.substance.localeCompare(b.substance)),
+  allergies: [...allergies].map((a) => a.toLowerCase().trim()).sort(),
+  patientAge,
+  patientGender,
+  language,
+});
+
 const runQuickDrugCheck = async ({
   medications = [],
   allergies = [],
@@ -90,8 +89,6 @@ const runQuickDrugCheck = async ({
 
     const lang = language === "ar" ? "Arabic" : "English";
 
-    // لو دواء واحد بس، مفيش حساسية، مفيش سن، ومفيش بيانات جرعة — مفيش داعي
-    // نكلم الـ AI خالص (مفيش أي عامل خطر ممكن يتفحص أصلاً)
     const hasAnyRiskFactor =
       medications.length > 1 ||
       allergies.length > 0 ||
@@ -111,8 +108,16 @@ const runQuickDrugCheck = async ({
       };
     }
 
-    // نجمع كل الأسماء (البراند + المادة الفعالة) عشان الـ FDA lookup يلاقي بيانات
-    // التفاعلات حتى لو مكتوب بالمادة الفعالة بس
+    // ✅ نجرب الكاش الأول قبل أي حاجة (حتى قبل الـ FDA lookup)
+    const cacheKey = buildCacheKey(
+      "quickDrugCheck",
+      buildCachePayload({ medications, allergies, patientAge, patientGender, language }),
+    );
+    const cachedResults = await getCached(cacheKey);
+    if (cachedResults) {
+      return { success: true, data: { results: cachedResults } };
+    }
+
     const fdaLookupNames = medications.flatMap((m) =>
       [m.name, m.activeIngredient].filter(Boolean),
     );
@@ -121,9 +126,6 @@ const runQuickDrugCheck = async ({
       .map((drug) => `${drug.name}: ${drug.interactions || "no data"}`)
       .join("\n");
 
-    // بنعرض كل دواء بشكل بيفصل "المادة الفعالة" (الهوية الحقيقية) عن "الاسم
-    // التجاري على العلبة" (مجرد تسمية تسويقية) — عشان الموديل يقرأ المادة
-    // الفعالة كأول وأهم حاجة، مش الاسم التجاري
     const medicationsList = medications
       .map((m, i) => {
         const dose =
@@ -192,9 +194,6 @@ STRICT RULES:
     const raw = response.choices[0].message.content.trim();
     const parsed = JSON.parse(extractJson(raw));
 
-    // نتأكد إن كل دواء في القايمة الأصلية له نتيجة، حتى لو الموديل نسي واحد
-    // (fallback: نعتبره "مفيش مشكلة" بدل ما نكسر الواجهة). بنقارن سواء بالاسم
-    // التجاري أو بالـ label الكامل عشان أي فرق بسيط في الرد مايكسرش الربط.
     const results = medications.map((m) => {
       const label = formatDrugLabel(m);
       const found = parsed.results?.find(
@@ -206,6 +205,8 @@ STRICT RULES:
         ? { drug: label, hasIssue: !!found.hasIssue, message: found.message || null }
         : { drug: label, hasIssue: false, message: null };
     });
+
+    await setCached(cacheKey, results); // ✅ نحفظ النتيجة عشان المرة الجاية
 
     return { success: true, data: { results } };
   } catch (error) {

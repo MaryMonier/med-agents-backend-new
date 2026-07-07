@@ -2,17 +2,15 @@ const { GoogleGenAI } = require("@google/genai");
 const Groq = require("groq-sdk");
 const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
 const { checkInteractions } = require("../services/openFDA.service");
-const { retrieve, formatContext } = require("../services/pinecone.service"); // ✅ pinecone مش rag
+const { retrieve, formatContext } = require("../services/pinecone.service");
+const { buildCacheKey, getCached, setCached } = require("../services/aiCache.service"); // ✅ جديد
 
-const gemini = GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
-  : null;
+const gemini = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 
 const GEMINI_MODEL = "gemini-2.5-flash";
 const GROQ_MODEL = "openai/gpt-oss-120b";
 
-// ✅ نفس الـ fallback بتاع medicalAgent (Gemini أول، Groq لو فشلت)
 const callLLM = async ({ messages, temperature, max_tokens }) => {
   const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
   const userMessage = messages.find((m) => m.role === "user")?.content || "";
@@ -45,6 +43,20 @@ const callLLM = async ({ messages, temperature, max_tokens }) => {
   }
 };
 
+// ✅ نسخة منظّمة من المدخلات لبناء الـ cache key
+const buildCachePayload = ({ medications, allergies, chronicConditions, age, language }) => ({
+  medications: [...medications]
+    .map((m) => ({
+      name: m.name.toLowerCase().trim(),
+      dosage: (m.dosage || "").toLowerCase().trim(),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+  allergies: [...allergies].map((a) => a.toLowerCase().trim()).sort(),
+  chronicConditions: [...chronicConditions].map((c) => c.toLowerCase().trim()).sort(),
+  age,
+  language,
+});
+
 const runDrugSafetyAgent = async ({
   medications = [],
   allergies = [],
@@ -54,6 +66,16 @@ const runDrugSafetyAgent = async ({
 }) => {
   try {
     const lang = language === "ar" ? "Arabic" : "English";
+
+    // ✅ نجرب الكاش الأول قبل الـ FDA lookup والـ RAG retrieve كمان
+    const cacheKey = buildCacheKey(
+      "drugSafety",
+      buildCachePayload({ medications, allergies, chronicConditions, age, language }),
+    );
+    const cachedReply = await getCached(cacheKey);
+    if (cachedReply) {
+      return { success: true, data: cachedReply };
+    }
 
     const fdaData = await checkInteractions(medications);
 
@@ -76,17 +98,11 @@ Drug: ${drug.name}
     const context = formatContext(ragDocs, language);
 
     const medicationsList = medications
-      .map(
-        (m, i) => `${i + 1}. ${m.name} - ${m.dosage || "no dosage specified"}`,
-      )
+      .map((m, i) => `${i + 1}. ${m.name} - ${m.dosage || "no dosage specified"}`)
       .join("\n");
 
     const allergiesList =
-      allergies.length > 0
-        ? allergies.join(", ")
-        : language === "ar"
-          ? "لا يوجد"
-          : "None";
+      allergies.length > 0 ? allergies.join(", ") : language === "ar" ? "لا يوجد" : "None";
 
     const conditionsList =
       chronicConditions.length > 0
@@ -142,7 +158,11 @@ STRICT RULES:
     });
 
     const reply = response.choices[0].message.content;
-    return { success: true, data: { role: "assistant", content: reply } };
+    const data = { role: "assistant", content: reply };
+
+    await setCached(cacheKey, data); // ✅ نحفظ النتيجة
+
+    return { success: true, data };
   } catch (error) {
     console.error("Drug Safety Agent Error:", error);
     return {
