@@ -36,9 +36,8 @@ const createFollowup = async (req, res) => {
       });
     }
 
-    const consultation = await Consultation.findById(consultationId).select(
-      "doctorId",
-    );
+    const consultation =
+      await Consultation.findById(consultationId).select("doctorId");
 
     const followup = await Followup.create({
       consultationId,
@@ -67,16 +66,26 @@ const createFollowup = async (req, res) => {
 
 const getFollowups = async (req, res) => {
   try {
-    const followups = await Followup.find({ patientId: { $ne: null } })
+    // الدكتور العادي يشوف الفولو أبس بتاعته بس (باستخدام doctorId المسجل
+    // على الفولو أب نفسه)، والأدمن يشوف الكل. ده أبسط وأصح من إن الفرونت
+    // يجيب كل الفولو أبس ويحاول يفلترها بالاعتماد على endpoint تاني بيستبعد
+    // كونسلتيشنز الفولو أب أصلاً (فكانت الفولو أبس الجديدة بتختفي غلط)
+    const isAdmin = req.user.role === "admin";
+    const filter = isAdmin
+      ? { patientId: { $ne: null } }
+      : { patientId: { $ne: null }, doctorId: req.user.id };
+    const followups = await Followup.find(filter)
       .populate("patientId", "name")
       .populate({
         path: "consultationId",
-        select: "doctorId structuredNote",
+        select:
+          "doctorId structuredNote diagnosis symptoms rawInput language isChronic followUpDate",
         populate: { path: "doctorId", select: "name" },
       })
       .populate({
         path: "completionConsultationId",
-        select: "doctorId structuredNote",
+        select:
+          "doctorId structuredNote diagnosis symptoms rawInput language isChronic followUpDate",
         populate: { path: "doctorId", select: "name" },
       })
       .sort({ createdAt: -1 });
@@ -118,11 +127,13 @@ const getFollowupsByDoctorId = async (req, res) => {
       .populate("patientId", "name")
       .populate({
         path: "consultationId",
-        select: "structuredNote",
+        select:
+          "structuredNote diagnosis symptoms rawInput language isChronic followUpDate",
       })
       .populate({
         path: "completionConsultationId",
-        select: "structuredNote",
+        select:
+          "structuredNote diagnosis symptoms rawInput language isChronic followUpDate",
       })
       .sort({ createdAt: -1 });
 
@@ -160,7 +171,10 @@ const getFollowupById = async (req, res) => {
     }
 
     const followup = await Followup.findById(id)
-      .populate("patientId", "name allergies chronicConditions dateOfBirth gender nationalID")
+      .populate(
+        "patientId",
+        "name allergies chronicConditions dateOfBirth gender nationalID",
+      )
       .populate({
         path: "consultationId",
         populate: { path: "doctorId", select: "name" },

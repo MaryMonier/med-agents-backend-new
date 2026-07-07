@@ -27,6 +27,10 @@ const followupSchema = new mongoose.Schema(
 
     instructions: { type: String, required: true },
     scheduledDate: { type: Date },
+    // بيتسجل بس لما الفولو أب دي فعلاً تتكمّل - تاريخ اليوم الحقيقي اللي
+    // الدكتور خلص فيه الزيارة، مختلف عن scheduledDate اللي هو الميعاد
+    // المجدول الأصلي (ممكن يكون قبله أو بعده حسب ظروف المريض)
+    completedAt: { type: Date, default: null },
     reminderSent: { type: Boolean, default: false },
     status: {
       type: String,
