@@ -382,6 +382,40 @@ const updateConsultation = async (req, res) => {
     // عن قصد، فلازم نلغي أي فولو أب pending كانت متجدولة)
     let newFollowUp = null;
     if ("followUpDate" in req.body) {
+      if (req.body.followUpDate) {
+        const followUp = new Date(req.body.followUpDate);
+        if (Number.isNaN(followUp.getTime())) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid followUpDate" });
+        }
+        const followUpDateOnly = new Date(
+          followUp.getFullYear(),
+          followUp.getMonth(),
+          followUp.getDate(),
+        );
+        const today = new Date();
+        const todayDateOnly = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          today.getDate(),
+        );
+        if (followUpDateOnly <= todayDateOnly) {
+          return res.status(400).json({
+            success: false,
+            message: "followUpDate must be after today",
+          });
+        }
+        const maxDate = new Date(todayDateOnly);
+        maxDate.setMonth(maxDate.getMonth() + 6);
+        if (followUpDateOnly > maxDate) {
+          return res.status(400).json({
+            success: false,
+            message: "followUpDate cannot be more than 6 months from today",
+          });
+        }
+      }
+
       const existingPendingFollowup = await Followup.findOne({
         consultationId: consultation._id,
         status: "pending",
