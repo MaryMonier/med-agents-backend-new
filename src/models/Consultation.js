@@ -17,9 +17,8 @@ const consultationSchema = new mongoose.Schema(
     rawInput: { type: String, required: true },
     structuredNote: { type: String },
     urgencyLevel: {
-  type: String,
-  enum: ["low", "medium", "critical", "unknown"],
-
+      type: String,
+      enum: ["low", "medium", "critical", "unknown"],
     },
     suggestedSpecialist: { type: String },
     // لو الدكتور حدد إن الدايجنوزز دي مرض مزمن، بنضيفها لـ Patient.chronicConditions
