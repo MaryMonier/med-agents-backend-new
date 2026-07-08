@@ -170,7 +170,8 @@ const runQuickCheckForMedications = async (
     const messagesByLabel = new Map();
     if (result?.success) {
       (result.data?.results || []).forEach((r) => {
-        if (r.drug) messagesByLabel.set(r.drug.toLowerCase(), r.message || null);
+        if (r.drug)
+          messagesByLabel.set(r.drug.toLowerCase(), r.message || null);
       });
     }
 
@@ -472,7 +473,10 @@ const getPrescriptionByConsultation = async (req, res, next) => {
     const prescription = await Prescription.findOne({
       consultationId: req.params.consultationId,
     })
-      .populate("patientId", "name dateOfBirth gender bloodType allergies")
+      .populate(
+        "patientId",
+        "name dateOfBirth gender bloodType allergies nationalID",
+      )
       .populate("consultationId", "symptoms diagnosis urgencyLevel");
 
     if (!prescription) {
