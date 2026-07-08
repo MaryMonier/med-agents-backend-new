@@ -8,6 +8,9 @@ const paymobService = require("../services/paymob.service");
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 
+// نفس حد "قرب يخلص" المستخدم في رسائل الفرونت إند - عشان يبقى النظام متسق
+const RENEWAL_WINDOW_DAYS = 3;
+
 // الدكتور بيدوس "اشترك دلوقتي" -> بنرجعله رابط دفع باي موب
 const initiatePayment = async (req, res) => {
   try {
@@ -28,6 +31,33 @@ const initiatePayment = async (req, res) => {
         success: false,
         message: "Doctor not found",
       });
+    }
+
+    // لو الاشتراك شغال (active) ولسه باقيله وقت كبير، مانوش بنسمح بتجديد "نفس الخطة" بدري
+    // لكن لو الدكتور عايز يرقّي لخطة مختلفة (Basic -> Pro)، بنسمحله في أي وقت
+    // على أساس إنه هيخسر الأيام الباقية من الخطة القديمة (مفيش إضافة وقت في حالة التبديل)
+    const isSamePlan = doctor.subscription.plan === plan;
+
+    if (
+      isSamePlan &&
+      doctor.subscription.status === "active" &&
+      doctor.subscription.subscriptionEnd
+    ) {
+      const daysLeft = Math.max(
+        0,
+        Math.ceil(
+          (new Date(doctor.subscription.subscriptionEnd) - new Date()) /
+            (1000 * 60 * 60 * 24)
+        )
+      );
+
+      if (daysLeft > RENEWAL_WINDOW_DAYS) {
+        return res.status(400).json({
+          success: false,
+          error: "SUBSCRIPTION_STILL_ACTIVE",
+          message: `You already have an active subscription with ${daysLeft} days remaining. You can renew starting ${RENEWAL_WINDOW_DAYS} days before it expires.`,
+        });
+      }
     }
 
     let amountCents;
@@ -136,7 +166,16 @@ const handlePaymobWebhook = async (req, res) => {
 
       if (doctor) {
         const startDate = new Date();
-        const endDate = calculateNewSubscriptionEnd(doctor.subscription, payment.months);
+
+        // لو الدكتور بيبدّل لخطة مختلفة عن اللي هو فيها دلوقتي (وهو active)،
+        // مابنضفش الوقت الباقي من الخطة القديمة - بيبدأ حساب من النهاردة عادي
+        const isPlanSwitch =
+          doctor.subscription.status === "active" &&
+          doctor.subscription.plan !== payment.plan;
+
+        const endDate = calculateNewSubscriptionEnd(doctor.subscription, payment.months, {
+          addRemainingTime: !isPlanSwitch,
+        });
 
         doctor.subscription.status = "active";
         doctor.subscription.plan = payment.plan;
