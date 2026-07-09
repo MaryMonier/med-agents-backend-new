@@ -184,6 +184,7 @@ const createPatient = async (request, response) => {
       bloodType,
       allergies,
       chronicConditions,
+      chronicMedications,
       nationalID,
     } = request.body;
     const createdBy = request.user.id;
@@ -207,6 +208,7 @@ const createPatient = async (request, response) => {
       bloodType,
       allergies,
       chronicConditions,
+      chronicMedications,
       createdBy,
       nationalID,
     });
@@ -263,7 +265,7 @@ const getPatientHistory = async (req, res) => {
 
     const patient = await Patient.findById(patientId)
       .select(
-        "name dateOfBirth gender bloodType allergies chronicConditions createdBy discontinuedMedications",
+        "name dateOfBirth gender bloodType allergies chronicConditions chronicMedications createdBy discontinuedMedications",
       )
       .populate("createdBy", "name specialty email");
 
@@ -394,6 +396,13 @@ const discontinueMedication = async (req, res) => {
       reason: reason || null,
     });
 
+    // لو الدواء ده كان مكتوب في خانة chronicMedications بنفس الاسم، نشيله من
+    // هناك كمان عشان الخانة تفضل معبّرة عن اللي المريض فعلاً بياخده دلوقتي
+    patient.chronicMedications = (patient.chronicMedications || []).filter(
+      (name) =>
+        name.trim().toLowerCase() !== medication.name.trim().toLowerCase(),
+    );
+
     await patient.save();
 
     return res.status(200).json({
@@ -425,9 +434,28 @@ const reactivateMedication = async (req, res) => {
         .json({ success: false, message: "Patient not found" });
     }
 
+    const discontinuedEntry = (patient.discontinuedMedications || []).find(
+      (d) => String(d.medicationId) === String(medicationId),
+    );
+
     patient.discontinuedMedications = (
       patient.discontinuedMedications || []
     ).filter((d) => String(d.medicationId) !== String(medicationId));
+
+    // نرجع اسم الدواء لخانة chronicMedications تاني (لو كان اتشال من هناك
+    // وقت الـ discontinue، ومش موجود بالفعل)
+    if (discontinuedEntry?.medicationName) {
+      const nameLower = discontinuedEntry.medicationName.trim().toLowerCase();
+      const alreadyThere = (patient.chronicMedications || []).some(
+        (n) => n.trim().toLowerCase() === nameLower,
+      );
+      if (!alreadyThere) {
+        patient.chronicMedications = [
+          ...(patient.chronicMedications || []),
+          discontinuedEntry.medicationName,
+        ];
+      }
+    }
 
     await patient.save();
 

@@ -331,6 +331,28 @@ const checkPrescriptionSafety = async (req, res, next) => {
 };
 
 // ─── Create Prescription ──────────────────────────────────────────────────────
+// ─── Helper: sync chronic medications into Patient.chronicMedications ───────
+// أي دواء اتحدد عليه isChronic في الروشتة، بيتضاف تلقائيًا لخانة
+// chronicMedications بتاعة المريض (من غير تكرار، مقارنة case-insensitive)
+const syncChronicMedicationsToPatient = async (patient, medications) => {
+  const chronicNames = medications
+    .filter((m) => m.isChronic && m.name)
+    .map((m) => m.name.trim());
+  if (chronicNames.length === 0) return;
+
+  const existingLower = new Set(
+    (patient.chronicMedications || []).map((n) => n.trim().toLowerCase()),
+  );
+  const toAdd = chronicNames.filter((n) => !existingLower.has(n.toLowerCase()));
+  if (toAdd.length === 0) return;
+
+  patient.chronicMedications = [
+    ...(patient.chronicMedications || []),
+    ...toAdd,
+  ];
+  await patient.save();
+};
+
 const createPrescription = async (req, res, next) => {
   try {
     const { consultationId, patientId, medications, language } = req.body;
@@ -382,6 +404,8 @@ const createPrescription = async (req, res, next) => {
       medications: medicationsWithQuickCheck,
       language: language || consultation.language,
     });
+
+    await syncChronicMedicationsToPatient(patient, medicationsWithQuickCheck);
 
     const populated = await Prescription.findById(prescription._id)
       .populate("patientId", "name dateOfBirth gender allergies nationalID")
@@ -621,6 +645,8 @@ const updatePrescription = async (req, res, next) => {
         patient,
         allActiveMedications,
       );
+
+      await syncChronicMedicationsToPatient(patient, updatedMedications);
     }
 
     const updated = await Prescription.findByIdAndUpdate(

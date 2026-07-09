@@ -12,6 +12,10 @@ const patientSchema = new mongoose.Schema(
     },
     allergies: [{ type: String }],
     chronicConditions: [{ type: String }],
+    // اختياري - أدوية كرونية معروفة عن المريض (زي لما تكون معاه من قبل ما
+    // ينضم للنظام). لما يتعمل discontinue لدواء كروني من روشتة، بيتشال من
+    // هنا كمان لو موجود (اسم مطابق) عشان الخانة تفضل معبّرة عن الحالة الحالية
+    chronicMedications: [{ type: String }],
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
