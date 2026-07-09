@@ -63,8 +63,14 @@ const getMedicationEndDate = (startDate, med) => {
 };
 
 // ─── Helper: is a medication from a past prescription still "active" now ────
-// Active = isChronic (lifelong) OR end date (createdAt + duration) is in the future.
-const isMedicationStillActive = (prescriptionCreatedAt, med) => {
+// Active = isChronic (lifelong) OR end date (createdAt + duration) is in the future,
+// AND it hasn't been explicitly discontinued by a doctor (see discontinuedSet).
+const isMedicationStillActive = (
+  prescriptionCreatedAt,
+  med,
+  discontinuedSet = new Set(),
+) => {
+  if (discontinuedSet.has(String(med._id))) return false;
   if (med.isChronic) return true;
   const end = getMedicationEndDate(prescriptionCreatedAt, med);
   if (!end) return true;
@@ -72,11 +78,12 @@ const isMedicationStillActive = (prescriptionCreatedAt, med) => {
 };
 
 // ─── Helper: get ALL currently active medications for a patient ─────────────
-// (from past prescriptions, chronic or duration not yet ended) with their
-// full dosage/frequency/duration info — needed so the Quick Check agent can
-// reason about real interactions/dosage against everything the patient is
-// actually taking right now, not just drugs that happen to share a name with
-// what's being typed in the current prescription.
+// (from past prescriptions, chronic or duration not yet ended, and not
+// explicitly discontinued) with their full dosage/frequency/duration info —
+// needed so the Quick Check agent can reason about real interactions/dosage
+// against everything the patient is actually taking right now, not just
+// drugs that happen to share a name with what's being typed in the current
+// prescription.
 const getAllActiveMedicationsForPatient = async (
   patientId,
   excludePrescriptionId = null,
@@ -84,14 +91,24 @@ const getAllActiveMedicationsForPatient = async (
   const query = { patientId };
   if (excludePrescriptionId) query._id = { $ne: excludePrescriptionId };
 
-  const pastPrescriptions = await Prescription.find(query).sort({
-    createdAt: -1,
-  });
+  const [pastPrescriptions, patient] = await Promise.all([
+    Prescription.find(query).sort({ createdAt: -1 }),
+    Patient.findById(patientId).select("discontinuedMedications"),
+  ]);
+
+  // مجموعة من "prescriptionId:medicationId" للأدوية اللي اتوقفت فعليًا
+  // (وتاريخ التوقف وصل بالفعل)، عشان نستبعدها من الأدوية الشغالة
+  const discontinuedSet = new Set(
+    (patient?.discontinuedMedications || [])
+      .filter((d) => new Date(d.discontinuedAt).getTime() <= Date.now())
+      .map((d) => String(d.medicationId)),
+  );
 
   const active = [];
   pastPrescriptions.forEach((presc) => {
     presc.medications.forEach((med) => {
-      if (!isMedicationStillActive(presc.createdAt, med)) return;
+      if (!isMedicationStillActive(presc.createdAt, med, discontinuedSet))
+        return;
       active.push({
         name: med.name,
         activeIngredient: med.activeIngredient || null,
