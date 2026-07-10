@@ -173,6 +173,7 @@ const createPatient = async (request, response) => {
       bloodType,
       allergies,
       chronicConditions,
+      chronicMedications,
       nationalID,
     } = request.body;
     const createdBy = request.user.id;
@@ -197,6 +198,7 @@ const createPatient = async (request, response) => {
       bloodType,
       allergies,
       chronicConditions,
+      chronicMedications,
       createdBy,
       nationalID,
     });
@@ -253,7 +255,7 @@ const getPatientHistory = async (req, res) => {
 
     const patient = await Patient.findById(patientId)
       .select(
-        "name dateOfBirth gender bloodType allergies chronicConditions createdBy",
+        "name dateOfBirth gender bloodType allergies chronicConditions chronicMedications createdBy discontinuedMedications",
       )
       .populate("createdBy", "name specialty email");
 
@@ -262,6 +264,14 @@ const getPatientHistory = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Patient not found" });
     }
+
+    // خريطة سريعة: medicationId -> تفاصيل التوقف (لو موجود)
+    const discontinuedMap = new Map(
+      (patient.discontinuedMedications || []).map((d) => [
+        String(d.medicationId),
+        d,
+      ]),
+    );
 
     const consultations = await Consultation.find({ patientId })
       .select(
@@ -287,9 +297,20 @@ const getPatientHistory = async (req, res) => {
           prescription: prescription
             ? {
                 _id: prescription._id,
-                medications: prescription.medications.map((m) =>
-                  decorateMedicationForDisplay(m.toObject ? m.toObject() : m),
-                ),
+                medications: prescription.medications.map((m) => {
+                  const plain = decorateMedicationForDisplay(
+                    m.toObject ? m.toObject() : m,
+                  );
+                  const discontinuedInfo = discontinuedMap.get(
+                    String(plain._id),
+                  );
+                  return {
+                    ...plain,
+                    isDiscontinued: !!discontinuedInfo,
+                    discontinuedAt: discontinuedInfo?.discontinuedAt || null,
+                    discontinuedReason: discontinuedInfo?.reason || null,
+                  };
+                }),
               }
             : null,
         };
@@ -305,6 +326,132 @@ const getPatientHistory = async (req, res) => {
   }
 };
 
+// ─── Discontinue a medication from a PAST prescription without touching that
+// prescription at all — just records the event on the patient so future
+// interaction/active-medication checks stop counting it as still being taken.
+const discontinueMedication = async (req, res) => {
+  try {
+    const patientId = req.params.id;
+    const { prescriptionId, medicationId, reason, discontinuedAt } = req.body;
+
+    if (!prescriptionId || !medicationId) {
+      return res.status(400).json({
+        success: false,
+        message: "prescriptionId and medicationId are required",
+      });
+    }
+
+    // نتأكد إن الروشتة والدواء دول فعلاً بتوع المريض ده قبل ما نسجل حاجة
+    const prescription = await Prescription.findOne({
+      _id: prescriptionId,
+      patientId,
+    }).select("medications");
+    if (!prescription) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Prescription not found" });
+    }
+    const medication = prescription.medications.id(medicationId);
+    if (!medication) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Medication not found" });
+    }
+
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Patient not found" });
+    }
+
+    // لو كان متسجل قبل كده، شيل القديم واستبدله (يسمح بتحديث السبب/التاريخ)
+    patient.discontinuedMedications = (
+      patient.discontinuedMedications || []
+    ).filter((d) => String(d.medicationId) !== String(medicationId));
+
+    patient.discontinuedMedications.push({
+      prescriptionId,
+      medicationId,
+      medicationName: medication.name,
+      discontinuedAt: discontinuedAt || new Date(),
+      discontinuedBy: req.user.id,
+      reason: reason || null,
+    });
+
+    // لو الدواء ده كان مكتوب في خانة chronicMedications بنفس الاسم، نشيله من
+    // هناك كمان عشان الخانة تفضل معبّرة عن اللي المريض فعلاً بياخده دلوقتي
+    patient.chronicMedications = (patient.chronicMedications || []).filter(
+      (name) =>
+        name.trim().toLowerCase() !== medication.name.trim().toLowerCase(),
+    );
+
+    await patient.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Medication marked as discontinued",
+      data: patient.discontinuedMedications,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── Undo a discontinuation (in case of a mistake) ───────────────────────────
+const reactivateMedication = async (req, res) => {
+  try {
+    const patientId = req.params.id;
+    const { medicationId } = req.body;
+
+    if (!medicationId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "medicationId is required" });
+    }
+
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Patient not found" });
+    }
+
+    const discontinuedEntry = (patient.discontinuedMedications || []).find(
+      (d) => String(d.medicationId) === String(medicationId),
+    );
+
+    patient.discontinuedMedications = (
+      patient.discontinuedMedications || []
+    ).filter((d) => String(d.medicationId) !== String(medicationId));
+
+    // نرجع اسم الدواء لخانة chronicMedications تاني (لو كان اتشال من هناك
+    // وقت الـ discontinue، ومش موجود بالفعل)
+    if (discontinuedEntry?.medicationName) {
+      const nameLower = discontinuedEntry.medicationName.trim().toLowerCase();
+      const alreadyThere = (patient.chronicMedications || []).some(
+        (n) => n.trim().toLowerCase() === nameLower,
+      );
+      if (!alreadyThere) {
+        patient.chronicMedications = [
+          ...(patient.chronicMedications || []),
+          discontinuedEntry.medicationName,
+        ];
+      }
+    }
+
+    await patient.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Medication reactivated",
+      data: patient.discontinuedMedications,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAllPatients,
   getPatientById,
@@ -314,4 +461,8 @@ module.exports = {
   getAllPatientsByDoctor,
   getPatientsByDoctorId,
   getPatientHistory,
+
+
+  discontinueMedication,
+  reactivateMedication,
 };
