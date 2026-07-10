@@ -9,26 +9,19 @@ const Prescription = require("../models/Prescription");
 const decorateMedicationForDisplay = (med) => {
   if (!med) return med;
 
-  const hasStructuredDosage =
-    med.dosageAmount !== undefined && med.dosageUnit !== undefined;
-  const hasStructuredFrequency =
-    med.frequencyCount !== undefined && med.frequencyPeriod !== undefined;
-  const hasStructuredDuration =
-    med.durationValue !== undefined && med.durationUnit !== undefined;
+  const hasStructuredDosage = med.dosageAmount !== undefined && med.dosageUnit !== undefined;
+  const hasStructuredFrequency = med.frequencyCount !== undefined && med.frequencyPeriod !== undefined;
+  const hasStructuredDuration = med.durationValue !== undefined && med.durationUnit !== undefined;
 
   return {
     ...med,
-    dosage: hasStructuredDosage
-      ? `${med.dosageAmount}${med.dosageUnit}`
-      : med.dosage || med.dose || "",
-    frequency: hasStructuredFrequency
-      ? `${med.frequencyCount}x ${med.frequencyPeriod}`
-      : med.frequency || "",
+    dosage: hasStructuredDosage ? `${med.dosageAmount}${med.dosageUnit}` : med.dosage || med.dose || '',
+    frequency: hasStructuredFrequency ? `${med.frequencyCount}x ${med.frequencyPeriod}` : med.frequency || '',
     duration: med.isChronic
-      ? "Lifelong (Chronic)"
+      ? 'Lifelong (Chronic)'
       : hasStructuredDuration
         ? `${med.durationValue} ${med.durationUnit}`
-        : med.duration || "",
+        : med.duration || '',
   };
 };
 
@@ -55,9 +48,7 @@ const getAllPatientsByDoctor = async (request, response) => {
       });
     }
     const totalPatients = await Patient.countDocuments({ createdBy });
-    const allPatients = await Patient.find({
-      $or: [{ createdBy }, { doctors: createdBy }],
-    })
+    const allPatients = await Patient.find({$or:[{ createdBy},{ doctors:createdBy}]}).sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit));
 
@@ -93,10 +84,8 @@ const getPatientsByDoctorId = async (request, response) => {
     const { page = 1, limit = 10 } = request.query;
     const skip = (page - 1) * limit;
 
-    const filter = { $or: [{ createdBy: doctorId }, { doctors: doctorId }] };
-
-    const totalPatients = await Patient.countDocuments(filter);
-    const patients = await Patient.find(filter)
+    const totalPatients = await Patient.countDocuments({ createdBy: doctorId });
+    const patients = await Patient.find({ createdBy: doctorId })
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
@@ -129,7 +118,7 @@ const getAllPatients = async (request, response) => {
           { name: { $regex: search, $options: "i" } },
           { nationalID: { $regex: search, $options: "i" } },
         ],
-      });
+      }).sort({ createdAt: -1 });
 
       return response.status(200).json({
         success: true,
@@ -139,7 +128,7 @@ const getAllPatients = async (request, response) => {
     }
 
     const totalPatients = await Patient.countDocuments({});
-    const allPatients = await Patient.find({}).skip(skip).limit(Number(limit));
+    const allPatients = await Patient.find({}).sort({ createdAt: -1 }).skip(skip).limit(Number(limit));
 
     return response.status(200).json({
       success: true,
@@ -188,13 +177,14 @@ const createPatient = async (request, response) => {
     } = request.body;
     const createdBy = request.user.id;
 
-    if (!name || !dateOfBirth || !gender || !bloodType || !nationalID) {
+    if (!name || !dateOfBirth || !gender || !bloodType) {
       return response
         .status(400)
         .json({ success: false, message: "All fields are required" });
     }
 
-    if (nationalID.length !== 14) {
+    // الرقم القومي اختياري - لو اتبعت، لازم يكون 14 رقم
+    if (nationalID && nationalID.length !== 14) {
       return response
         .status(400)
         .json({ success: false, message: "National ID Must be 14 numbers" });
@@ -275,14 +265,9 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote rawInput followUpDate followupId createdAt",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId createdAt",
       )
       .sort({ createdAt: -1 });
-
-    console.log(
-      `[getPatientHistory] patientId=${patientId} found ${consultations.length} consultations, ` +
-        `first diagnosis="${consultations[0]?.diagnosis}"`,
-    );
 
     const history = await Promise.all(
       consultations.map(async (consultation) => {
@@ -298,8 +283,6 @@ const getPatientHistory = async (req, res) => {
           urgencyLevel: consultation.urgencyLevel,
           suggestedSpecialist: consultation.suggestedSpecialist || null,
           structuredNote: consultation.structuredNote || null,
-          doctorNotes: consultation.rawInput || null,
-          followUpDate: consultation.followUpDate || null,
           isFollowup: !!consultation.followupId, // لو كانت من فولو أب
           prescription: prescription
             ? {
