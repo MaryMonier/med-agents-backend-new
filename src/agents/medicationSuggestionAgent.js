@@ -31,6 +31,10 @@ const callLLM = async ({
         systemInstruction: systemPrompt,
         temperature,
         maxOutputTokens: max_tokens,
+        // بدل ما نقفل التفكير تمامًا (0)، بنديله ميزانية صغيرة (256 توكن) -
+        // كفاية إنه "يفكر" شوية في اختيار الدواء المناسب، بس من غير ما ياكل
+        // كل ميزانية الـ maxOutputTokens ويسبب قطع في الـ JSON زي الأول
+        thinkingConfig: { thinkingBudget: 256 },
         ...(jsonMode ? { responseMimeType: "application/json" } : {}),
       },
     });
@@ -134,9 +138,8 @@ ${previousMedsList}
 Compare the current diagnosis/symptoms against this prior treatment and decide the right move
 for EACH relevant drug — don't just repeat the same plan by default:
 - If the condition improved and treatment is working: keep the same medication/dose (you may omit it, or include it unchanged only if it still needs to appear in the plan)
-- If there's no improvement or it's worsening: increase the dose, or switch to a different/stronger medication — pick whichever is clinically more appropriate
+- If there's no improvement or it's worsening: increase the dose, switch to a different/stronger medication, OR add a second agent on top of the existing one — pick whichever is clinically most appropriate. Partial/inadequate response to a single agent is a common, valid reason to suggest combination therapy — don't hesitate to suggest 2 medications together when that's the standard next step.
 - If the condition has resolved: don't re-suggest that medication
-- You may add a new medication on top of the existing plan if the presentation calls for it
 State the change (or the decision to keep it) briefly in "reason" (e.g. "no improvement, increasing dose" / "switching due to poor response").
 `
         : "";
@@ -146,7 +149,7 @@ State the change (or the decision to keep it) briefly in "reason" (e.g. "no impr
 Rules:
 - Text fields in ${lang} (drug names stay in standard English/generic form)
 - Output ONLY raw minified JSON — no markdown, no whitespace/newlines, no explanation
-- 1 to 3 medications max, focused first-line plan
+- Suggest as many medications as are CLINICALLY APPROPRIATE for this diagnosis (up to 3) — do not default to just one out of caution. If standard practice for this diagnosis is combination therapy, or if this is a follow-up showing inadequate response to a single agent, suggest the full appropriate regimen, not just one drug.
 - Consider allergies and active medications; don't repeat an active med (unless a dose change is clearly needed); avoid known allergy conflicts
 - "reason" is max 8 words, tied to diagnosis/symptoms
 - This is a draft for doctor review, not final
@@ -185,7 +188,7 @@ Active meds: ${activeMedsList}`;
     let parsed;
     try {
       // المحاولة الأساسية: ميزانية توكينز صغيرة كفاية لـ 3 أدوية مضغوطة
-      parsed = await callAndParse(800);
+      parsed = await callAndParse(1100);
     } catch (firstErr) {
       // نادر جدًا بعد التصغير، بس لو حصل قطع برضو، نجرب مرة واحدة بس
       // بمساحة أكبر شوية بدل ما نفشل على طول
@@ -193,7 +196,7 @@ Active meds: ${activeMedsList}`;
         "Medication Suggestion Agent: first attempt failed to parse, retrying with more room...",
       );
       try {
-        parsed = await callAndParse(1400);
+        parsed = await callAndParse(1700);
       } catch (secondErr) {
         console.error(
           "Medication Suggestion Agent: failed to parse JSON after retry:",
