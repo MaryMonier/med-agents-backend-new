@@ -730,4 +730,5 @@ module.exports = {
   updatePrescription,
   deletePrescription,
   getAllPrescriptions,
+  getAllActiveMedicationsForPatient,
 };

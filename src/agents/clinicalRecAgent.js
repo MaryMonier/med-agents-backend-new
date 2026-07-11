@@ -1,5 +1,5 @@
-const { chatCompletion } = require('../services/openai.service');
-const { retrieve, formatContext } = require('../services/pinecone.service');
+const { chatCompletion } = require("../services/openai.service");
+const { retrieve, formatContext } = require("../services/pinecone.service");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -8,10 +8,16 @@ const runClinicalRecAgent = async ({
   symptoms = [],
   diagnosis = "",
   language = "en",
+  isFollowup = false,
+  previousDiagnosis = "",
+  previousSymptoms = "",
+  previousInstructions = "",
+  previousPrescription = "",
 }) => {
-  const formattedSymptoms = Array.isArray(symptoms) && symptoms.length
-    ? symptoms.join(", ")
-    : "Not specified";
+  const formattedSymptoms =
+    Array.isArray(symptoms) && symptoms.length
+      ? symptoms.join(", ")
+      : "Not specified";
 
   // لو الـ RAG retrieval فشل، نكمّل من غير context بدل ما نفشّل الطلب كله
   let context = "";
@@ -19,14 +25,39 @@ const runClinicalRecAgent = async ({
     const ragDocs = await retrieve(formattedSymptoms, language, 3);
     context = formatContext(ragDocs, language);
   } catch (ragError) {
-    console.error("RAG retrieval failed, continuing without context:", ragError.message);
+    console.error(
+      "RAG retrieval failed, continuing without context:",
+      ragError.message,
+    );
   }
+
+  const followupBlock =
+    isFollowup &&
+    (previousDiagnosis ||
+      previousSymptoms ||
+      previousInstructions ||
+      previousPrescription)
+      ? `
+This is a FOLLOW-UP visit. Here is what was recorded at the PREVIOUS visit for the SAME patient:
+- Previous diagnosis: ${previousDiagnosis || "Not recorded"}
+- Previous symptoms: ${previousSymptoms || "Not recorded"}
+- Previous doctor's note / instructions: ${previousInstructions || "Not recorded"}
+- Medications prescribed at that visit: ${previousPrescription || "None recorded"}
+
+You MUST explicitly compare the patient's CURRENT presentation (below) against the previous
+visit above, and state in the structuredNote whether the patient has improved, stayed the
+same, or gotten worse — and why (e.g. symptom resolved, new symptom appeared, same complaint
+persists despite treatment). Take the medications they were already prescribed into account
+when judging response to treatment (e.g. "still symptomatic despite being on X"). Do not
+treat this as a brand-new, unrelated case.
+`
+      : "";
 
   const systemPrompt = `
 You are a clinical recommendation assistant for licensed doctors.
 Use the following medical guidelines:
 ${context}
-
+${followupBlock}
 STRICT RULES:
 - Respond ONLY in ${language === "ar" ? "Arabic" : "English"}
 - Output ONLY valid JSON, no extra text
@@ -63,7 +94,7 @@ Return JSON only:
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const result = await chatCompletion({ systemPrompt, userMessage });
-      const cleaned = result.content.replace(/```json|```/g, '').trim();
+      const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -81,7 +112,10 @@ Return JSON only:
       return parsed;
     } catch (error) {
       lastError = error;
-      console.error(`AI Error (attempt ${attempt}/${MAX_ATTEMPTS}):`, error.message);
+      console.error(
+        `AI Error (attempt ${attempt}/${MAX_ATTEMPTS}):`,
+        error.message,
+      );
       if (attempt < MAX_ATTEMPTS) {
         await delay(700 * attempt);
       }
@@ -90,7 +124,9 @@ Return JSON only:
 
   // كل المحاولات فشلت فعلاً → نرمي الخطأ عشان الكنترولر يرجّع إيرور حقيقي
   // (مش fallback مزيف) فالـ retry اللي في الفرونت إند يقدر يتصرف صح
-  throw new Error(lastError?.message || "AI request failed after multiple attempts");
+  throw new Error(
+    lastError?.message || "AI request failed after multiple attempts",
+  );
 };
 
 module.exports = { runClinicalRecAgent };

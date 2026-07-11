@@ -4,6 +4,12 @@ const Followup = require("../models/Followup");
 const Prescription = require("../models/Prescription");
 
 const { runClinicalRecAgent } = require("../agents/clinicalRecAgent");
+const {
+  runMedicationSuggestionAgent,
+} = require("../agents/medicationSuggestionAgent");
+const {
+  getAllActiveMedicationsForPatient,
+} = require("./prescriptionController");
 
 const getStartOfTodayInEgypt = () => {
   const now = new Date();
@@ -550,13 +556,30 @@ const deleteConsultation = async (req, res) => {
 
 const getAIRecommendation = async (req, res) => {
   try {
-    const { symptoms, diagnosis, rawInput, language } = req.body;
+    const {
+      symptoms,
+      diagnosis,
+      rawInput,
+      language,
+      visitType,
+      previousDiagnosis,
+      previousSymptoms,
+      previousInstructions,
+      previousPrescription,
+    } = req.body;
 
     const agentResult = await runClinicalRecAgent({
       rawInput,
       symptoms,
       diagnosis,
       language: language || "en",
+      // لو دي فولو أب، ابعت بيانات الزيارة السابقة عشان الإيجنت يقدر يقارن
+      // ويقول هل المريض اتحسن ولا لأ، مش يتعامل معاها كحالة جديدة من الصفر
+      isFollowup: visitType === "followup",
+      previousDiagnosis: previousDiagnosis || "",
+      previousSymptoms: previousSymptoms || "",
+      previousInstructions: previousInstructions || "",
+      previousPrescription: previousPrescription || "",
     });
 
     res.status(200).json({
@@ -571,6 +594,71 @@ const getAIRecommendation = async (req, res) => {
     });
   }
 };
+
+const getMedicationSuggestions = async (req, res) => {
+  try {
+    const {
+      diagnosis,
+      symptoms,
+      rawInput,
+      language,
+      patientId,
+      isFollowup,
+      previousPrescription,
+    } = req.body;
+
+    if (!diagnosis || !diagnosis.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "diagnosis is required",
+      });
+    }
+
+    let allergies = [];
+    let activeMedications = [];
+    let patientAge = null;
+
+    if (patientId) {
+      const patient = await Patient.findById(patientId).select(
+        "allergies dateOfBirth",
+      );
+      if (patient) {
+        allergies = patient.allergies || [];
+        if (patient.dateOfBirth) {
+          const today = new Date();
+          const birth = new Date(patient.dateOfBirth);
+          patientAge = today.getFullYear() - birth.getFullYear();
+          const m = today.getMonth() - birth.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+            patientAge--;
+          }
+        }
+      }
+      activeMedications = await getAllActiveMedicationsForPatient(patientId);
+    }
+
+    const result = await runMedicationSuggestionAgent({
+      diagnosis,
+      symptoms: symptoms || [],
+      rawInput: rawInput || "",
+      allergies,
+      activeMedications,
+      patientAge,
+      language: language || "en",
+      isFollowup: !!isFollowup,
+      previousPrescription: previousPrescription || [],
+    });
+
+    if (!result.success) {
+      return res.status(502).json({ success: false, message: result.message });
+    }
+
+    res.status(200).json({ success: true, data: result.data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   createConsultation,
   getAllConsultations,
@@ -581,4 +669,5 @@ module.exports = {
 
   getConsultationsByDoctorId,
   getAIRecommendation,
+  getMedicationSuggestions,
 };

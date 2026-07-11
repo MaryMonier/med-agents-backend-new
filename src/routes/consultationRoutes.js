@@ -7,9 +7,10 @@ const {
   updateConsultation,
   deleteConsultation,
   getAllConsultationsByDoctor,
-    getConsultationsByDoctorId,   // 
+  getConsultationsByDoctorId, //
 
   getAIRecommendation,
+  getMedicationSuggestions,
 } = require("../controllers/consultationController");
 
 const authMiddleware = require("../middleware/auth.middleware");
@@ -19,9 +20,10 @@ router.use(authMiddleware);
 router.use(checkSubscription);
 
 router.route("/").get(getAllConsultations).post(createConsultation);
-router.route("/doctor").get(getAllConsultationsByDoctor)
-router.route("/ai-recommendation").post(getAIRecommendation)
-router.route("/by-doctor/:doctorId").get(getConsultationsByDoctorId);   // 
+router.route("/doctor").get(getAllConsultationsByDoctor);
+router.route("/ai-recommendation").post(getAIRecommendation);
+router.route("/medication-suggestions").post(getMedicationSuggestions);
+router.route("/by-doctor/:doctorId").get(getConsultationsByDoctorId); //
 
 router
   .route("/:id")
