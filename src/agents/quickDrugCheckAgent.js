@@ -33,6 +33,12 @@ const callLLM = async ({ messages, temperature, max_tokens, jsonMode = false }) 
         systemInstruction: systemPrompt,
         temperature,
         maxOutputTokens: max_tokens,
+        // ✅ من غير ده، Gemini 2.5 Flash بيستهلك جزء (غالبًا كبير) من
+        // maxOutputTokens في "internal thinking" مش في الـ JSON النهائي نفسه،
+        // فكل ما الروشتة تكبر (أكتر أدوية) كل ما احتمال الرد يترقطع أو يوصل
+        // فاضي يزيد. بنحدد ميزانية تفكير صغيرة (256) عشان الغالبية العظمى من
+        // التوكينز تروح للـ JSON الفعلي اللي محتاجينه كرد.
+        thinkingConfig: { thinkingBudget: 256 },
         ...(jsonMode ? { responseMimeType: "application/json" } : {}),
       },
     });
@@ -163,9 +169,15 @@ Return ONLY a JSON object, no extra text, no markdown fences, in exactly this sh
 {"results": [{"drug": "<the Product/brand name exactly as listed above>", "hasIssue": true|false, "message": "<ONE short sentence in ${lang}, or null if no issue>"}]}
 Return exactly one entry per drug, in the same order as the list above.`;
 
+    // ✅ max_tokens كان ثابت (600) مهما كان عدد الأدوية - الرد لازم يحتوي عنصر
+    // JSON مستقل لكل دواء (drug + hasIssue + message)، فروشتة فيها 4-5 أدوية
+    // كانت ممكن تاخد رد مقطوع (JSON.parse بيفشل) لأن 600 توكن مكنتش كفاية.
+    // بنحسبها ديناميكيًا: قاعدة ثابتة (500) + مساحة لكل دواء (220 توكن).
+    const maxTokens = 500 + medications.length * 220;
+
     const response = await callLLM({
       temperature: 0.2,
-      max_tokens: 600,
+      max_tokens: maxTokens,
       jsonMode: true,
       messages: [
         {

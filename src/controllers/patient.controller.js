@@ -34,10 +34,14 @@ const getAllPatientsByDoctor = async (request, response) => {
 
     if (search) {
       const allPatients = await Patient.find({
-        createdBy,
-        $or: [
-          { name: { $regex: search, $options: "i" } },
-          { nationalID: { $regex: search, $options: "i" } },
+        $and: [
+          { $or: [{ createdBy }, { doctors: createdBy }] },
+          {
+            $or: [
+              { name: { $regex: search, $options: "i" } },
+              { nationalID: { $regex: search, $options: "i" } },
+            ],
+          },
         ],
       });
 
@@ -47,7 +51,7 @@ const getAllPatientsByDoctor = async (request, response) => {
         pagination: null,
       });
     }
-    const totalPatients = await Patient.countDocuments({ createdBy });
+    const totalPatients = await Patient.countDocuments({$or:[{ createdBy},{ doctors:createdBy}]});
     const allPatients = await Patient.find({$or:[{ createdBy},{ doctors:createdBy}]}).sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit));
@@ -84,8 +88,13 @@ const getPatientsByDoctorId = async (request, response) => {
     const { page = 1, limit = 10 } = request.query;
     const skip = (page - 1) * limit;
 
-    const totalPatients = await Patient.countDocuments({ createdBy: doctorId });
-    const patients = await Patient.find({ createdBy: doctorId })
+    // مش بس المرضى اللي الدكتور ده أنشأهم (createdBy) - كمان المرضى اللي كانوا
+    // موجودين قبل كده (أنشأهم دكتور تاني) وعمل الدكتور ده لهم consultation
+    // (وده بيضيفه لـ patient.doctors تلقائي في createConsultation)
+    const doctorFilter = { $or: [{ createdBy: doctorId }, { doctors: doctorId }] };
+
+    const totalPatients = await Patient.countDocuments(doctorFilter);
+    const patients = await Patient.find(doctorFilter)
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
