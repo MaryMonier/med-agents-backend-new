@@ -1,6 +1,16 @@
 const Patient = require("../models/Patient");
 const Consultation = require("../models/Consultation");
 const Prescription = require("../models/Prescription");
+const Followup = require("../models/Followup");
+
+// أدمن يقدر يوصل لأي مريض. الدكتور العادي لازم يكون هو اللي أنشأ المريض ده
+// أو يكون ضايف نفسه في patient.doctors (عن طريق عمل consultation له قبل كده).
+const canAccessPatient = (user, patient) => {
+  if (user.role === "admin") return true;
+  const userId = String(user.id);
+  if (String(patient.createdBy) === userId) return true;
+  return (patient.doctors || []).some((d) => String(d) === userId);
+};
 
 // Build readable display fields for a structured medication, matching what
 // the frontend (PatientHistory, PrescriptionsList, PatientReport) expects:
@@ -118,6 +128,16 @@ const getPatientsByDoctorId = async (request, response) => {
 
 const getAllPatients = async (request, response) => {
   try {
+    // ده الـ endpoint اللي بيرجع كل مرضى النظام من غير أي فلترة - مخصّص
+    // للأدمن داشبورد بس. أي دكتور عادي المفروض يستخدم /patients/doctor
+    // (getAllPatientsByDoctor) اللي بيرجعله مرضاه هو بس
+    if (request.user.role !== "admin") {
+      return response.status(403).json({
+        success: false,
+        message: "Access denied. Admins only.",
+      });
+    }
+
     const { search, page = 1, limit = 10 } = request.query;
 
     const skip = (page - 1) * limit;
@@ -164,6 +184,12 @@ const getPatientById = async (request, response) => {
       return response
         .status(404)
         .json({ success: false, message: "patient not found" });
+    }
+    if (!canAccessPatient(request.user, patient)) {
+      return response.status(403).json({
+        success: false,
+        message: "Access denied. This patient is not under your care.",
+      });
     }
     return response.status(200).json({ success: true, data: patient });
   } catch (error) {
@@ -221,17 +247,30 @@ const createPatient = async (request, response) => {
 
 const deletePatient = async (request, response) => {
   try {
-    console.log("Hello delete patient");
     const id = request.params.id;
-    const deletedPatient = await Patient.findByIdAndDelete(id);
-    if (!deletedPatient) {
+    const patient = await Patient.findById(id);
+    if (!patient) {
       return response
         .status(404)
         .json({ success: false, message: "patient not found" });
     }
+    if (!canAccessPatient(request.user, patient)) {
+      return response.status(403).json({
+        success: false,
+        message: "Access denied. This patient is not under your care.",
+      });
+    }
+
+    // نمسح كل حاجة مرتبطة بالمريض ده عشان مايفضلش سجلات يتيمة (كونسلتيشنز/
+    // روشتات/فولو أبس) معلّقة على patientId اتمسح
+    await Prescription.deleteMany({ patientId: id });
+    await Followup.deleteMany({ patientId: id });
+    await Consultation.deleteMany({ patientId: id });
+    await Patient.findByIdAndDelete(id);
+
     return response
       .status(200)
-      .json({ success: true, message: "patient deleted successfully" });
+      .json({ success: true, message: "patient and all related records deleted successfully" });
   } catch (error) {
     return response
       .status(500)
@@ -240,8 +279,20 @@ const deletePatient = async (request, response) => {
 };
 const updatePatient = async (request, response) => {
   try {
-    console.log("Hello update patient");
     const id = request.params.id;
+    const existingPatient = await Patient.findById(id);
+    if (!existingPatient) {
+      return response
+        .status(404)
+        .json({ success: false, message: "patient not found" });
+    }
+    if (!canAccessPatient(request.user, existingPatient)) {
+      return response.status(403).json({
+        success: false,
+        message: "Access denied. This patient is not under your care.",
+      });
+    }
+
     const updatedPatient = await Patient.findByIdAndUpdate(id, request.body, {
       returnDocument: "after",
       runValidators: true,
@@ -272,6 +323,12 @@ const getPatientHistory = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Patient not found" });
+    }
+    if (!canAccessPatient(req.user, patient)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. This patient is not under your care.",
+      });
     }
 
     // خريطة سريعة: medicationId -> تفاصيل التوقف (لو موجود)
@@ -373,6 +430,12 @@ const discontinueMedication = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Patient not found" });
     }
+    if (!canAccessPatient(req.user, patient)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. This patient is not under your care.",
+      });
+    }
 
     // لو كان متسجل قبل كده، شيل القديم واستبدله (يسمح بتحديث السبب/التاريخ)
     patient.discontinuedMedications = (
@@ -424,6 +487,12 @@ const reactivateMedication = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Patient not found" });
+    }
+    if (!canAccessPatient(req.user, patient)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. This patient is not under your care.",
+      });
     }
 
     const discontinuedEntry = (patient.discontinuedMedications || []).find(

@@ -190,6 +190,15 @@ const getFollowupById = async (req, res) => {
         message: "Followup not found",
       });
     }
+    if (
+      req.user.role !== "admin" &&
+      String(followup.doctorId) !== String(req.user.id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own follow-ups.",
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -215,17 +224,27 @@ const updateFollowup = async (req, res) => {
       });
     }
 
-    const followup = await Followup.findByIdAndUpdate(id, req.body, {
-      new: true,
-      runValidators: true,
-    });
-
-    if (!followup) {
+    const existingFollowup = await Followup.findById(id).select("doctorId");
+    if (!existingFollowup) {
       return res.status(404).json({
         success: false,
         message: "Followup not found",
       });
     }
+    if (
+      req.user.role !== "admin" &&
+      String(existingFollowup.doctorId) !== String(req.user.id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only edit your own follow-ups.",
+      });
+    }
+
+    const followup = await Followup.findByIdAndUpdate(id, req.body, {
+      new: true,
+      runValidators: true,
+    });
 
     res.status(200).json({
       success: true,
@@ -252,14 +271,24 @@ const deleteFollowup = async (req, res) => {
       });
     }
 
-    const followup = await Followup.findByIdAndDelete(id);
-
+    const followup = await Followup.findById(id).select("doctorId");
     if (!followup) {
       return res.status(404).json({
         success: false,
         message: "Followup not found",
       });
     }
+    if (
+      req.user.role !== "admin" &&
+      String(followup.doctorId) !== String(req.user.id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only delete your own follow-ups.",
+      });
+    }
+
+    await Followup.findByIdAndDelete(id);
 
     res.status(200).json({
       success: true,

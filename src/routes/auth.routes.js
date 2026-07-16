@@ -7,7 +7,7 @@ const { register, login, testAI, getAllDoctors, getDoctorById, updateDoctor, del
 router.post('/register', register);
 router.post('/login', login);
 router.post('/logout', authMiddleware,logout);
-router.post('/test-ai', testAI);
+router.post('/test-ai', authMiddleware, testAI);
 router.post('/create-admin', createAdmin);
 
 // router.get('/doctors', authMiddleware, getAllDoctors);

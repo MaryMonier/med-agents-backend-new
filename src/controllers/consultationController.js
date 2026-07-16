@@ -126,7 +126,10 @@ const createConsultation = async (req, res) => {
         .json({ success: false, message: "Patient not found" });
     }
 
-    if (patient.createdBy.toString() !== req.user.id.toString()) {
+    // patient.createdBy ممكن يكون null (لو الدكتور الأصلي اتمسح - راجعي
+    // الكومنت على الحقل ده في Patient model)، فمينفعش نعمل .toString() عليه
+    // مباشرة من غير ما نتأكد إنه موجود الأول، وإلا هيطيح بـ 500
+    if (String(patient.createdBy) !== String(req.user.id)) {
       await Patient.findByIdAndUpdate(patientId, {
         $addToSet: { doctors: req.user.id },
       });
@@ -309,6 +312,15 @@ const getConsultationById = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Consultation not found" });
     }
+    if (
+      req.user.role !== "admin" &&
+      String(consultation.doctorId?._id || consultation.doctorId) !== String(req.user.id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own consultations.",
+      });
+    }
     res.status(200).json({ success: true, data: consultation });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -325,13 +337,24 @@ const updateConsultation = async (req, res) => {
     // عشان لو الدكتور شال علامة الصح، نعرف نشيل التشخيص الصح (القديم) من
     // chronicConditions — مش التشخيص الجديد اللي ممكن يكون اتغيّر في نفس التعديل
     const beforeUpdate = await Consultation.findById(req.params.id).select(
-      "isChronic diagnosis patientId",
+      "isChronic diagnosis patientId doctorId",
     );
     if (!beforeUpdate) {
       return res
         .status(404)
         .json({ success: false, message: "Consultation not found" });
     }
+    if (
+      req.user.role !== "admin" &&
+      String(beforeUpdate.doctorId) !== String(req.user.id)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only edit your own consultations.",
+      });
+    }
+
+    // ... باقي الدالة زي ما هي من غير أي تغيير
 
     // لو followUpDate جاية فاضية (يعني الدكتور مسحها عن قصد)، لازم نحولها
     // لـ null مش نسيبها string فاضي — عشان Mongoose هيفشل وهو بيحاول يحوّلها

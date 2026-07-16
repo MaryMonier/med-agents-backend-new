@@ -15,7 +15,7 @@ const adminMiddleware = require("../middleware/admin.middleware");
 const checkSubscription = require("../middleware/checkSubscription.middleware");
 const router = require("express").Router();
 
-router.get("/", authMiddleware, checkSubscription, getAllPatients);
+router.get("/", authMiddleware, adminMiddleware, checkSubscription, getAllPatients);
 router.get(
   "/doctor",
   authMiddleware,

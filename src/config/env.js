@@ -4,6 +4,7 @@ module.exports = {
   PORT: process.env.PORT || 5000,
   MONGODB_URI: process.env.MONGODB_URI,
   JWT_SECRET: process.env.JWT_SECRET,
+  ADMIN_SECRET_KEY: process.env.ADMIN_SECRET_KEY,
   // OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   GROQ_API_KEY: process.env.GROQ_API_KEY,
   PINECONE_API_KEY: process.env.PINECONE_API_KEY,

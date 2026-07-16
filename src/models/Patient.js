@@ -2,8 +2,8 @@ const mongoose = require("mongoose");
 
 const patientSchema = new mongoose.Schema(
   {
-    name: { type: String, require: true },
-    nationalID: { type: String, require: true },
+    name: { type: String, required: true },
+    nationalID: { type: String },
     dateOfBirth: { type: Date, required: true },
     gender: { type: String, enum: ["male", "female"], required: true },
     bloodType: {
@@ -16,10 +16,13 @@ const patientSchema = new mongoose.Schema(
     // ينضم للنظام). لما يتعمل discontinue لدواء كروني من روشتة، بيتشال من
     // هنا كمان لو موجود (اسم مطابق) عشان الخانة تفضل معبّرة عن الحالة الحالية
     chronicMedications: [{ type: String }],
+    // مش required عمدًا: لو الدكتور اللي أنشأ المريض اتمسح، deleteDoctor
+    // بيحط null هنا بدل ما يسيب reference معلّق على user مش موجود، والسجل
+    // الطبي للمريض بيفضل موجود زي ما هو.
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      default: null,
     },
     doctors: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
 

@@ -8,8 +8,6 @@ const connectDB = require("./config/db");   // ⬅️  السطر ده
 const errorHandler = require("./middleware/errorHandler");
 const patientRouter = require("./routes/patient.router");
 const contactRouter = require("./routes/contact.routes");
-// const errorHandler = require('./middleware/errorHandler');
-const piiSanitize = require("./middleware/piiSanitize");
 const authRoutes = require("./routes/auth.routes");
 const followupRoutes = require("./routes/followupRoutes");
 const prescriptionRoutes = require("./routes/prescriptionRoutes");
@@ -39,7 +37,6 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(limiter);
-app.use(piiSanitize);
 
 app.use("/api/auth", authRoutes);
 

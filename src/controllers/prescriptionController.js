@@ -582,6 +582,15 @@ const getPrescriptionById = async (req, res, next) => {
       return next(err);
     }
 
+    if (
+      req.user.role !== "admin" &&
+      String(prescription.doctorId) !== String(req.user.id)
+    ) {
+      const err = new Error("Access denied. You can only view your own prescriptions.");
+      err.status = 403;
+      return next(err);
+    }
+
     res.status(200).json({
       success: true,
       data: {

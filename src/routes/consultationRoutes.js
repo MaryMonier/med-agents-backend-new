@@ -14,12 +14,14 @@ const {
 } = require("../controllers/consultationController");
 
 const authMiddleware = require("../middleware/auth.middleware");
+const adminMiddleware = require("../middleware/admin.middleware");
 const checkSubscription = require("../middleware/checkSubscription.middleware");
-router.use(authMiddleware);
 router.use(authMiddleware);
 router.use(checkSubscription);
 
-router.route("/").get(getAllConsultations).post(createConsultation);
+// دي بترجع كونسلتيشنز كل الدكاترة - أدمن بس. الدكتور العادي يستخدم
+// /doctor (getAllConsultationsByDoctor) اللي بتفلتر بتاعته هو بس.
+router.route("/").get(adminMiddleware, getAllConsultations).post(createConsultation);
 router.route("/doctor").get(getAllConsultationsByDoctor);
 router.route("/ai-recommendation").post(getAIRecommendation);
 router.route("/medication-suggestions").post(getMedicationSuggestions);

@@ -1,14 +1,16 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { JWT_SECRET } = require('../config/env');
+const { JWT_SECRET, ADMIN_SECRET_KEY } = require('../config/env');
 const BlacklistedToken = require('../models/BlacklistedToken');
+const Patient = require('../models/Patient');
+const Consultation = require('../models/Consultation');
+const Prescription = require('../models/Prescription');
+const Followup = require('../models/Followup');
 const { chatCompletion } = require('../services/openai.service');
 
 
 const register = async (req, res) => {
-  console.log(req.body);
-  
   try {
     const { name, email, password, specialty, language } = req.body;
 
@@ -32,20 +34,12 @@ const login = async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    if (user.role === "doctor" && !user.trialStartedAt) {
-    user.trialStartedAt = new Date();
-
-    user.trialEndsAt = new Date(
-        Date.now() + 14 * 24 * 60 * 60 * 1000
-    );
-
-    user.subscriptionStatus = "trial";
-
-    await user.save();
-}
-
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ success: false, message: 'This account has been deactivated. Please contact the admin.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.passwordHash);
@@ -65,6 +59,8 @@ const login = async (req, res) => {
   }
 };
 
+// ⚠️ endpoint داخلي للتجربة بس - لازم يكون فيه authMiddleware على الراوت
+// (اتضاف في auth.routes.js) عشان محدش يستهلك الـ AI budget من غير تسجيل دخول.
 const testAI = async (req, res) => {
   try {
     const result = await chatCompletion({
@@ -76,6 +72,7 @@ const testAI = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 const getAllDoctors = async (req, res) => {
   try {
     const doctors = await User.find({ role: 'doctor' }).select('-passwordHash');
@@ -85,8 +82,16 @@ const getAllDoctors = async (req, res) => {
   }
 };
 
+// أدمن يشوف أي دكتور، الدكتور العادي يشوف بروفايله هو بس
 const getDoctorById = async (req, res) => {
   try {
+    if (req.user.role !== 'admin' && req.user.id !== req.params.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only view your own profile.',
+      });
+    }
+
     const doctor = await User.findById(req.params.id).select('-passwordHash');
     if (!doctor) return res.status(404).json({ success: false, message: 'Doctor not found' });
     res.json({ success: true, data: doctor });
@@ -110,21 +115,45 @@ const updateDoctor = async (req, res) => {
   }
 };
 
+// بيمسح الدكتور + كل حاجة مرتبطة بيه (كونسلتيشنز، روشتات، فولو أبس اللي هو
+// طرف فيها)، وبيشيله من مصفوفة doctors بتاعة أي مريض كان بيتابعه، عشان
+// نتجنب سجلات يتيمة معلّقة على user اتمسح.
 const deleteDoctor = async (req, res) => {
   try {
-    const doctor = await User.findByIdAndDelete(req.params.id);
+    const doctorId = req.params.id;
+    const doctor = await User.findById(doctorId);
     if (!doctor) return res.status(404).json({ success: false, message: 'Doctor not found' });
-    res.json({ success: true, message: 'Doctor deleted successfully' });
+
+    // المرضى اللي الدكتور ده كان createdBy بتاعهم - المريض نفسه بيفضل موجود
+    // (السجل الطبي أهم من علاقته بالدكتور اللي أنشأه)، بس لازم نشيل الدكتور
+    // من الحقول اللي بتشاور عليه عشان محدش يحاول يعرض بيانات بالـ id ده تاني.
+    await Patient.updateMany(
+      { createdBy: doctorId },
+      { $set: { createdBy: null } }
+    );
+    await Patient.updateMany(
+      { doctors: doctorId },
+      { $pull: { doctors: doctorId } }
+    );
+
+    await Consultation.deleteMany({ doctorId });
+    await Prescription.deleteMany({ doctorId });
+    await Followup.deleteMany({ doctorId });
+
+    await User.findByIdAndDelete(doctorId);
+
+    res.json({ success: true, message: 'Doctor and related records deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 const createAdmin = async (req, res) => {
   try {
     const { name, email, password, secretKey } = req.body;
 
-    // secret key عشان محدش يعمل admin من غير إذن
-    if (secretKey !== 'MED_AGENTS_ADMIN_2024') {
+    // secret key عشان محدش يعمل admin من غير إذن - لازم يكون متظبط في .env
+    if (!ADMIN_SECRET_KEY || secretKey !== ADMIN_SECRET_KEY) {
       return res.status(403).json({ success: false, message: 'Invalid secret key' });
     }
 
@@ -141,10 +170,6 @@ const createAdmin = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-
-
-
 
 const logout = async (req, res) => {
   try {
@@ -197,11 +222,4 @@ const updateMyProfile = async (req, res) => {
   }
 };
 
-module.exports = { register, login, logout,testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor, createAdmin,updateMyProfile };
-// module.exports = { register, login, testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor };
-
-// module.exports = { register, login, testAI };
-
-
-
-
+module.exports = { register, login, logout, testAI, getAllDoctors, getDoctorById, updateDoctor, deleteDoctor, createAdmin, updateMyProfile };
