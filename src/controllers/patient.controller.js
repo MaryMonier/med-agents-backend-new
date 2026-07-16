@@ -8,8 +8,20 @@ const Followup = require("../models/Followup");
 const canAccessPatient = (user, patient) => {
   if (user.role === "admin") return true;
   const userId = String(user.id);
-  if (String(patient.createdBy) === userId) return true;
-  return (patient.doctors || []).some((d) => String(d) === userId);
+
+  // patient.createdBy ممكن يكون ID نصي عادي، أو object كامل لو الكويري
+  // عملتله .populate("createdBy") (زي getPatientHistory) - لازم ناخد
+  // الـ _id بتاعه في الحالة دي، مش نعمل String() على الـ object نفسه
+  // (اللي كان بيرجّع "[object Object]" ودايمًا يفشل في المقارنة).
+  const createdById = patient.createdBy?._id
+    ? String(patient.createdBy._id)
+    : String(patient.createdBy);
+  if (createdById === userId) return true;
+
+  // نفس الفكرة لو doctors[] فيها عناصر populated بدل IDs عادية
+  return (patient.doctors || []).some(
+    (d) => String(d?._id || d) === userId,
+  );
 };
 
 // Build readable display fields for a structured medication, matching what

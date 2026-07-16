@@ -124,18 +124,29 @@ const deleteDoctor = async (req, res) => {
     const doctor = await User.findById(doctorId);
     if (!doctor) return res.status(404).json({ success: false, message: 'Doctor not found' });
 
-    // المرضى اللي الدكتور ده كان createdBy بتاعهم - المريض نفسه بيفضل موجود
-    // (السجل الطبي أهم من علاقته بالدكتور اللي أنشأه)، بس لازم نشيل الدكتور
-    // من الحقول اللي بتشاور عليه عشان محدش يحاول يعرض بيانات بالـ id ده تاني.
-    await Patient.updateMany(
-      { createdBy: doctorId },
-      { $set: { createdBy: null } }
-    );
+    // المرضى اللي الدكتور ده هو اللي أنشأهم (createdBy) - المطلوب دلوقتي
+    // إنهم يتحذفوا نهائيًا مع الدكتور، بكل السجلات المرتبطة بيهم (كونسلتيشنز/
+    // روشتات/فوللو أب) عشان محدش يفضل معلّق على مريض متمسوح.
+    const ownedPatients = await Patient.find({ createdBy: doctorId }).select('_id');
+    const ownedPatientIds = ownedPatients.map((p) => p._id);
+
+    if (ownedPatientIds.length > 0) {
+      await Consultation.deleteMany({ patientId: { $in: ownedPatientIds } });
+      await Prescription.deleteMany({ patientId: { $in: ownedPatientIds } });
+      await Followup.deleteMany({ patientId: { $in: ownedPatientIds } });
+      await Patient.deleteMany({ _id: { $in: ownedPatientIds } });
+    }
+
+    // المرضى اللي الدكتور ده مش اللي أنشأهم بس عمل معاهم كونسلتيشن (موجود في
+    // doctors[])، دول بيفضلوا موجودين (ليهم دكتور تاني أساسي)، بس بنشيل
+    // ربط الدكتور المحذوف منهم بس.
     await Patient.updateMany(
       { doctors: doctorId },
       { $pull: { doctors: doctorId } }
     );
 
+    // كونسلتيشنز/روشتات/فوللو أب المتبقيين (على مرضى مش هو صاحبهم) واللي
+    // عملهم الدكتور ده بنفسه - بتتحذف زي الأول.
     await Consultation.deleteMany({ doctorId });
     await Prescription.deleteMany({ doctorId });
     await Followup.deleteMany({ doctorId });
