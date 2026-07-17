@@ -23,9 +23,6 @@ const reportGenRoutes = require("./routes/reportGen.routes");
 
 app.set("trust proxy", 1);
 
-connectDB().catch((err) => {
-  console.error("Failed to connect to DB:", err.message);
-});
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
