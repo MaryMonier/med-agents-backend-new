@@ -99,7 +99,7 @@ const renewSubscription = async (req, res) => {
 };
 const getDoctorsSubscriptions = async (req, res) => {
   try {
-    const { search = "", page = 1, limit = 10 } = req.query;
+    const { search = "", status = "", plan = "", page = 1, limit = 10 } = req.query;
 
     const currentPage = Number(page);
     const pageSize = Number(limit);
@@ -123,6 +123,14 @@ const getDoctorsSubscriptions = async (req, res) => {
           },
         },
       ];
+    }
+
+    if (status) {
+      filter["subscription.status"] = status;
+    }
+
+    if (plan) {
+      filter["subscription.plan"] = plan;
     }
 
     const totalDoctors = await User.countDocuments(filter);
