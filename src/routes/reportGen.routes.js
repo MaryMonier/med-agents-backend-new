@@ -5,10 +5,11 @@ const reportGenAgent = require('../agents/reportGen.agent');
 const Consultation = require('../models/Consultation');
 const Prescription = require('../models/Prescription');
 const checkSubscription = require('../middleware/checkSubscription.middleware');
+const requireProPlan = require('../middleware/requireProPlan.middleware');
 
 
 
-router.post('/generate', authMiddleware, checkSubscription,async (req, res, next) => {
+router.post('/generate', authMiddleware, checkSubscription,requireProPlan,async (req, res, next) => {
   try {
     const { consultationId, language } = req.body;
 
