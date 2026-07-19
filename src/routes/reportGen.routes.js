@@ -7,6 +7,7 @@ const reportGenAgent = require("../agents/reportGen.agent");
 const Consultation = require("../models/Consultation");
 const Prescription = require("../models/Prescription");
 const Patient = require("../models/Patient");
+const Followup = require("../models/Followup");
 
 /**
  * POST /api/reports/generate
@@ -70,26 +71,61 @@ router.post(
           .json({ success: false, message: "Patient not found" });
       }
 
-      // ── جيب الكونسلتيشنز بتاعة الدكتور ده والمريض ده ────────────────────────
-      const baseQuery = { patientId, doctorId };
+      // ── تحقق إن المريض ده بتاع الدكتور ده (الأدمن معفي) ──────────────────
+      const isAdmin = req.user.role === "admin";
+      const isOwner =
+        String(patient.createdBy) === String(doctorId) ||
+        (patient.doctors || []).some(
+          (d) => String(d?._id || d) === String(doctorId),
+        );
 
+      if (!isAdmin && !isOwner) {
+        return res
+          .status(403)
+          .json({ success: false, message: "Access denied to this patient" });
+      }
+
+      // ── جيب الكونسلتيشنز ─────────────────────────────────────────────────
       let consultations = [];
 
       if (scope === "consultation") {
-        // كونسلتيشن واحد بالـ id
+        // 1. جيب الكونسلتيشن الأصلية
         const single = await Consultation.findOne({
           _id: consultationId,
-          ...baseQuery,
+          patientId,
         }).lean();
         if (!single) {
           return res
             .status(404)
             .json({ success: false, message: "Consultation not found" });
         }
-        consultations = [single];
+
+        // 2. جيب كل الـ follow-ups اللي اتعملت من الكونسلتيشن دي
+        const followups = await Followup.find({ consultationId }).lean();
+
+        // 3. جيب الـ completion consultations بتاعت الـ follow-ups (لو اتكملوا)
+        const completionIds = followups
+          .filter((f) => f.completionConsultationId)
+          .map((f) => f.completionConsultationId);
+
+        const completionConsultations =
+          completionIds.length > 0
+            ? await Consultation.find({
+                _id: { $in: completionIds },
+                patientId,
+              }).lean()
+            : [];
+
+        // الأصلية الأول، بعدين الـ completions بالترتيب الزمني
+        consultations = [single, ...completionConsultations].sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
       } else {
-        // جيب كل الكونسلتيشنز وفلتر بالتاريخ
-        const all = await Consultation.find(baseQuery)
+        // للسنوي والشهري — الأدمن يشوف كل كونسلتيشنز المريض، الدكتور بتاعيه بس
+        const all = await Consultation.find(
+          isAdmin ? { patientId } : { patientId, doctorId },
+        )
           .sort({ createdAt: -1 })
           .lean();
 
