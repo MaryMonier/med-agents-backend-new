@@ -75,7 +75,7 @@ const getFollowups = async (req, res) => {
       ? { patientId: { $ne: null } }
       : { patientId: { $ne: null }, doctorId: req.user.id };
     const followups = await Followup.find(filter)
-      .populate("patientId", "name nationalID")
+      .populate("patientId", "name phone")
       .populate({
         path: "consultationId",
         select:
@@ -124,7 +124,7 @@ const getFollowupsByDoctorId = async (req, res) => {
     }
 
     const followups = await Followup.find({ doctorId })
-      .populate("patientId", "name nationalID")
+      .populate("patientId", "name phone")
       .populate({
         path: "consultationId",
         select:
@@ -173,7 +173,7 @@ const getFollowupById = async (req, res) => {
     const followup = await Followup.findById(id)
       .populate(
         "patientId",
-        "name allergies chronicConditions dateOfBirth gender nationalID",
+        "name allergies chronicConditions dateOfBirth gender phone",
       )
       .populate({
         path: "consultationId",

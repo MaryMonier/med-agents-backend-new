@@ -408,7 +408,7 @@ const createPrescription = async (req, res, next) => {
     await syncChronicMedicationsToPatient(patient, medicationsWithQuickCheck);
 
     const populated = await Prescription.findById(prescription._id)
-      .populate("patientId", "name dateOfBirth gender allergies nationalID")
+      .populate("patientId", "name dateOfBirth gender allergies phone")
       .populate("consultationId", "symptoms diagnosis createdAt followupId");
 
     res.status(201).json({
@@ -446,7 +446,7 @@ const getPrescriptionDates = async (req, res, next) => {
 };
 
 // ─── Get All Prescriptions for the logged-in doctor (with optional search) ──
-// GET /api/prescriptions?search=name-or-nationalID&date=YYYY-MM-DD&page=1&limit=10
+// GET /api/prescriptions?search=name&date=YYYY-MM-DD&page=1&limit=10
 const getAllPrescriptions = async (req, res, next) => {
   try {
     const { search, date, page = 1, limit = 10 } = req.query;
@@ -455,10 +455,7 @@ const getAllPrescriptions = async (req, res, next) => {
 
     if (search && search.trim()) {
       const matchingPatients = await Patient.find({
-        $or: [
-          { name: { $regex: search.trim(), $options: "i" } },
-          { nationalID: { $regex: search.trim(), $options: "i" } },
-        ],
+        name: { $regex: search.trim(), $options: "i" },
       }).select("_id");
       filter.patientId = { $in: matchingPatients.map((p) => p._id) };
     }
@@ -477,7 +474,7 @@ const getAllPrescriptions = async (req, res, next) => {
     const total = await Prescription.countDocuments(filter);
 
     const prescriptions = await Prescription.find(filter)
-      .populate("patientId", "name dateOfBirth gender allergies nationalID")
+      .populate("patientId", "name dateOfBirth gender allergies phone")
       .populate({
         path: "consultationId",
         select: "followupId doctorId diagnosis symptoms createdAt",
@@ -516,7 +513,7 @@ const getPrescriptionByConsultation = async (req, res, next) => {
     })
       .populate(
         "patientId",
-        "name dateOfBirth gender bloodType allergies nationalID",
+        "name dateOfBirth gender bloodType allergies phone",
       )
       .populate("consultationId", "symptoms diagnosis urgencyLevel");
 
@@ -569,7 +566,7 @@ const getPrescriptionById = async (req, res, next) => {
     const prescription = await Prescription.findById(req.params.id)
       .populate(
         "patientId",
-        "name dateOfBirth gender bloodType allergies chronicConditions nationalID",
+        "name dateOfBirth gender bloodType allergies chronicConditions phone",
       )
       .populate(
         "consultationId",
@@ -586,7 +583,9 @@ const getPrescriptionById = async (req, res, next) => {
       req.user.role !== "admin" &&
       String(prescription.doctorId) !== String(req.user.id)
     ) {
-      const err = new Error("Access denied. You can only view your own prescriptions.");
+      const err = new Error(
+        "Access denied. You can only view your own prescriptions.",
+      );
       err.status = 403;
       return next(err);
     }
@@ -666,7 +665,7 @@ const updatePrescription = async (req, res, next) => {
       },
       { new: true, runValidators: true },
     )
-      .populate("patientId", "name dateOfBirth gender allergies nationalID")
+      .populate("patientId", "name dateOfBirth gender allergies phone")
       .populate("consultationId", "symptoms diagnosis createdAt followupId");
 
     res.status(200).json({
