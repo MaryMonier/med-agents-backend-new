@@ -5,6 +5,7 @@ const {
   getMySubscription,
   renewSubscription,
   getDoctorsSubscriptions,
+  unsubscribeDoctor,
 } = require("../controllers/subscription.controller");
 
 router.get("/me", authMiddleware, getMySubscription);
@@ -14,6 +15,13 @@ router.patch(
   authMiddleware,
   adminMiddleware,
   renewSubscription
+);
+
+router.patch(
+  "/:doctorId/unsubscribe",
+  authMiddleware,
+  adminMiddleware,
+  unsubscribeDoctor
 );
 
 router.get(

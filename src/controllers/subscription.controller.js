@@ -199,8 +199,35 @@ const getDoctorsSubscriptions = async (req, res) => {
 
 
 
+
+// للأدمن بس - يلغي اشتراك الدكتور فوراً
+const unsubscribeDoctor = async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+
+    const user = await User.findById(doctorId);
+
+    if (!user || user.role !== "doctor") {
+      return res.status(404).json({ success: false, message: "Doctor not found" });
+    }
+
+    user.subscription.status = "expired";
+    user.subscription.subscriptionEnd = new Date();
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Subscription cancelled successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getMySubscription,
   renewSubscription
   ,getDoctorsSubscriptions
+  ,unsubscribeDoctor
 };
