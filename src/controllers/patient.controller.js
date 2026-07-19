@@ -232,10 +232,18 @@ const createPatient = async (request, response) => {
     } = request.body;
     const createdBy = request.user.id;
 
-    if (!name || !dateOfBirth || !gender || !bloodType || !phone) {
+    if (!name || !dateOfBirth || !gender || !phone) {
       return response
         .status(400)
         .json({ success: false, message: "All fields are required" });
+    }
+
+    // تاريخ الميلاد مينفعش يكون في المستقبل
+    if (new Date(dateOfBirth) > new Date()) {
+      return response.status(400).json({
+        success: false,
+        message: "Date of birth cannot be in the future",
+      });
     }
 
     // لازم يكون رقم موبايل مصري صحيح (01 + 0/1/2/5 + 8 أرقام)
@@ -324,6 +332,16 @@ const updatePatient = async (request, response) => {
       return response.status(403).json({
         success: false,
         message: "Access denied. This patient is not under your care.",
+      });
+    }
+
+    if (
+      request.body.dateOfBirth &&
+      new Date(request.body.dateOfBirth) > new Date()
+    ) {
+      return response.status(400).json({
+        success: false,
+        message: "Date of birth cannot be in the future",
       });
     }
 

@@ -1,63 +1,126 @@
 const { chatCompletion } = require("../services/openai.service");
-// const { retrieve, formatContext } = require('../services/rag.service');
-const { retrieve, formatContext } = require("../services/pinecone.service"); // ✅
+const { retrieve, formatContext } = require("../services/pinecone.service");
 
+/**
+ * reportGenAgent
+ *
+ * بيتعامل مع قايمة كونسلتيشنز بدل ما يشتغل على واحدة بس —
+ * عشان يقدر يولّد ريبورت شامل (سنوي / شهري / كونسلتيشن واحد)
+ *
+ * @param {{
+ *   consultations: Array,   // قايمة الكونسلتيشنز المفلترة (مع الروشتة جواها لو موجودة)
+ *   patient: Object,        // بيانات المريض الأساسية
+ *   scopeLabel: string,     // "Yearly Report" / "Monthly Report" / "Specific Consultation"
+ *   rangeLabel: string,     // "Year 2024" / "March 2024" / "Diagnosis — date"
+ *   language?: "en"|"ar"
+ * }} params
+ */
 const reportGenAgent = async ({
-  consultation,
-  prescription,
+  consultations = [],
+  patient,
+  scopeLabel,
+  rangeLabel,
   language = "en",
 }) => {
   try {
-    const ragDocs = await retrieve(
-      consultation.symptoms?.join(" "),
-      language,
-      3,
-    );
+    // بنجمع كل الأعراض من الكونسلتيشنز عشان نعمل RAG بيهم
+    const allSymptoms = [
+      ...new Set(consultations.flatMap((c) => c.symptoms || [])),
+    ];
+    const ragQuery =
+      allSymptoms.join(" ") || patient?.name || "general medical report";
+
+    const ragDocs = await retrieve(ragQuery, language, 3);
     const context = formatContext(ragDocs, language);
+
+    // بنبني ملخص لكل كونسلتيشن في شكل نص منظم يبعته للـ AI
+    const buildConsultationSummary = (c) => {
+      const meds =
+        c.prescription?.medications?.map((m) => m.name).join(", ") ||
+        (language === "ar" ? "لا يوجد" : "None");
+      const warnings =
+        c.prescription?.warnings?.join(", ") ||
+        (language === "ar" ? "لا يوجد" : "None");
+      const date = c.date
+        ? new Date(c.date).toLocaleDateString()
+        : language === "ar"
+          ? "غير معروف"
+          : "Unknown";
+
+      if (language === "ar") {
+        return `
+[كونسلتيشن — ${date}]
+الأعراض: ${c.symptoms?.join("، ") || "غير محدد"}
+التشخيص: ${c.diagnosis || "غير محدد"}
+الملاحظة السريرية: ${c.structuredNote || "لا يوجد"}
+مستوى الخطورة: ${c.urgencyLevel || "غير محدد"}
+التخصص المقترح: ${c.suggestedSpecialist || "لا يوجد"}
+الأدوية: ${meds}
+التحذيرات: ${warnings}`.trim();
+      }
+      return `
+[Consultation — ${date}]
+Symptoms: ${c.symptoms?.join(", ") || "N/A"}
+Diagnosis: ${c.diagnosis || "Not determined"}
+Clinical Note: ${c.structuredNote || "N/A"}
+Urgency: ${c.urgencyLevel || "N/A"}
+Specialist: ${c.suggestedSpecialist || "None"}
+Medications: ${meds}
+Warnings: ${warnings}`.trim();
+    };
+
+    const consultationsSummary = consultations
+      .map(buildConsultationSummary)
+      .join("\n\n---\n\n");
+
+    const patientInfo =
+      language === "ar"
+        ? `المريض: ${patient?.name || "غير معروف"} | فصيلة الدم: ${patient?.bloodType || "غير معروفة"} | الحالات المزمنة: ${patient?.chronicConditions?.join("، ") || "لا يوجد"} | الحساسيات: ${patient?.allergies?.join("، ") || "لا يوجد"}`
+        : `Patient: ${patient?.name || "Unknown"} | Blood Type: ${patient?.bloodType || "N/A"} | Chronic Conditions: ${patient?.chronicConditions?.join(", ") || "None"} | Allergies: ${patient?.allergies?.join(", ") || "None"}`;
 
     const systemPrompt =
       language === "ar"
-        ? `أنت متخصص في إعداد التقارير الطبية. استخدم الإرشادات الطبية التالية: ${context}. أجب فقط بـ JSON.`
-        : `You are a medical report specialist. Use these medical guidelines: ${context}. Respond ONLY with JSON.`;
+        ? `أنت متخصص في إعداد التقارير الطبية الشاملة. استخدم الإرشادات الطبية التالية: ${context}. أجب فقط بـ JSON صالح بدون أي نص إضافي.`
+        : `You are a specialist in generating comprehensive medical reports. Use these medical guidelines: ${context}. Respond ONLY with valid JSON, no extra text.`;
 
     const userMessage =
       language === "ar"
-        ? `أنشئ تقريراً طبياً:
-        الأعراض: ${consultation.symptoms?.join(", ")}
-        التشخيص: ${consultation.diagnosis || "غير محدد"}
-        الملاحظة السريرية: ${consultation.structuredNote}
-        مستوى الخطورة: ${consultation.urgencyLevel}
-        التخصص المقترح: ${consultation.suggestedSpecialist}
-        الأدوية: ${prescription?.medications?.map((m) => m.name).join(", ") || "لا يوجد"}
-        التحذيرات: ${prescription?.warnings?.join(", ") || "لا يوجد"}
+        ? `أنشئ تقريراً طبياً شاملاً لـ (${scopeLabel} — ${rangeLabel}):
 
-        أرجع JSON:
-        {
-          "reportTitle": "...",
-          "patientCondition": "...",
-          "clinicalFindings": "...",
-          "treatmentPlan": "...",
-          "recommendations": "...",
-          "followupNotes": "..."
-        }`
-        : `Generate medical report:
-        Symptoms: ${consultation.symptoms?.join(", ")}
-        Diagnosis: ${consultation.diagnosis || "Not determined"}
-        Clinical Note: ${consultation.structuredNote}
-        Urgency: ${consultation.urgencyLevel}
-        Specialist: ${consultation.suggestedSpecialist}
-        Medications: ${prescription?.medications?.map((m) => m.name).join(", ") || "None"}
-        Warnings: ${prescription?.warnings?.join(", ") || "None"}
+${patientInfo}
 
-        Return JSON:
-        {
-          "reportTitle": "...",
-          "patientCondition": "...",
-          "clinicalFindings": "...",
-          "treatmentPlan": "...",
-          "recommendations": "...",
-          "followupNotes": "..."
-        }`;
+عدد الكونسلتيشنز: ${consultations.length}
+
+${consultationsSummary}
+
+أرجع JSON بهذا الشكل بالظبط:
+{
+  "reportTitle": "عنوان التقرير",
+  "executiveSummary": "ملخص تنفيذي شامل للحالة خلال الفترة",
+  "patientCondition": "تقييم الحالة الصحية العامة للمريض",
+  "clinicalFindings": "أبرز الاستنتاجات السريرية من مراجعة الكونسلتيشنز",
+  "treatmentPlan": "خطة العلاج الموصى بها بناءً على التاريخ المرضي",
+  "recommendations": "توصيات طبية للمتابعة",
+  "followupNotes": "ملاحظات المتابعة والخطوات القادمة"
+}`
+        : `Generate a comprehensive medical report for (${scopeLabel} — ${rangeLabel}):
+
+${patientInfo}
+
+Total Consultations: ${consultations.length}
+
+${consultationsSummary}
+
+Return JSON in exactly this format:
+{
+  "reportTitle": "Report title",
+  "executiveSummary": "Comprehensive executive summary of the patient's condition over this period",
+  "patientCondition": "Overall patient health assessment",
+  "clinicalFindings": "Key clinical findings from reviewing the consultations",
+  "treatmentPlan": "Recommended treatment plan based on medical history",
+  "recommendations": "Medical recommendations and follow-up actions",
+  "followupNotes": "Follow-up notes and next steps"
+}`;
 
     const result = await chatCompletion({ systemPrompt, userMessage });
     const cleaned = result.content.replace(/```json|```/g, "").trim();
@@ -66,14 +129,17 @@ const reportGenAgent = async ({
 
     return { success: true, data: parsed };
   } catch (error) {
+    console.error("[reportGenAgent] error:", error);
     return {
       success: false,
       error: true,
       message: "Report generation failed",
       fallback: {
-        reportTitle: "Medical Report",
-        patientCondition: "Unable to generate report",
-        clinicalFindings: consultation.structuredNote || "N/A",
+        reportTitle: scopeLabel || "Medical Report",
+        executiveSummary:
+          "Unable to generate summary — please review manually.",
+        patientCondition: "Unable to assess",
+        clinicalFindings: `${consultations.length} consultation(s) reviewed.`,
         treatmentPlan: "Please review manually",
         recommendations: "Consult with specialist",
         followupNotes: "Schedule follow-up appointment",

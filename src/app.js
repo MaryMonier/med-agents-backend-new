@@ -3,7 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 
-const connectDB = require("./config/db");   // ⬅️  السطر ده
+const connectDB = require("./config/db"); // ⬅️  السطر ده
 
 const errorHandler = require("./middleware/errorHandler");
 const patientRouter = require("./routes/patient.router");
@@ -22,7 +22,6 @@ const medicalAgentRouter = require("./routes/medicalAgentRoutes");
 const reportGenRoutes = require("./routes/reportGen.routes");
 
 app.set("trust proxy", 1);
-
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -46,7 +45,6 @@ app.use("/api/drug-safety", drugSafetyRoutes);
 
 app.use("/api/consultations", consultationRoutes);
 
-
 app.use("/api/medical-agent", medicalAgentRouter);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/followup-agent", followupAgentRouter);
@@ -56,7 +54,7 @@ app.get("/", (req, res) => {
   res.json({ message: "Med Agents API is running!" });
 });
 
-app.use("/api/report", reportGenRoutes);
+app.use("/api/reports", reportGenRoutes);
 
 app.use(errorHandler);
 
