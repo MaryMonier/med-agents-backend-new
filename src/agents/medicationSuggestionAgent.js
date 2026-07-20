@@ -34,7 +34,7 @@ const callLLM = async ({
         // بدل ما نقفل التفكير تمامًا (0)، بنديله ميزانية صغيرة (256 توكن) -
         // كفاية إنه "يفكر" شوية في اختيار الدواء المناسب، بس من غير ما ياكل
         // كل ميزانية الـ maxOutputTokens ويسبب قطع في الـ JSON زي الأول
-        thinkingConfig: { thinkingBudget: 256 },
+        thinkingConfig: { thinkingBudget: 1024 },
         ...(jsonMode ? { responseMimeType: "application/json" } : {}),
       },
     });
@@ -187,7 +187,9 @@ Symptoms: ${formattedSymptoms}
 Notes: ${rawInput || "none"}
 Age: ${ageInfo}
 Allergies: ${allergiesList}
-Active meds: ${activeMedsList}`;
+Active meds: ${activeMedsList}
+
+IMPORTANT: Reply with ONLY the raw JSON object. No markdown, no explanation, no text before or after.`;
 
     const callAndParse = async (maxTokens) => {
       const response = await callLLM({
@@ -212,7 +214,7 @@ Active meds: ${activeMedsList}`;
     let parsed;
     try {
       // المحاولة الأساسية: ميزانية توكينز صغيرة كفاية لـ 3 أدوية مضغوطة
-      parsed = await callAndParse(1400);
+      parsed = await callAndParse(2500);
     } catch (firstErr) {
       // نادر جدًا بعد التصغير، بس لو حصل قطع برضو، نجرب مرة واحدة بس
       // بمساحة أكبر شوية بدل ما نفشل على طول
