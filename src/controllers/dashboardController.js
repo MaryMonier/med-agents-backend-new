@@ -41,6 +41,7 @@ const getDashboardStats = async (req, res) => {
       subsByStatusRaw,
       subsByPlanRaw,
       patientGrowthRaw,
+      doctorGrowthRaw,
       revenueTotalRaw,
       revenueByPlanRaw,
       revenueByMonthRaw,
@@ -70,6 +71,17 @@ const getDashboardStats = async (req, res) => {
       ]),
       Patient.aggregate([
         { $match: { createdAt: { $gte: rangeStart } } },
+        {
+          $group: {
+            _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      // كام دكتور جديد اتسجل كل شهر - ده بيجاوب على سؤال "هل الاشتراكات بتزيد؟"
+      // (نمو قاعدة الدكاترة نفسها، مش الإيرادات) بغض النظر لو دخل Trial أو Pro
+      User.aggregate([
+        { $match: { role: "doctor", createdAt: { $gte: rangeStart } } },
         {
           $group: {
             _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
@@ -152,6 +164,14 @@ const getDashboardStats = async (req, res) => {
       return { month: label, count: match?.count || 0 };
     });
 
+    // كام دكتور جديد اتسجل شهريًا - نمو قاعدة الدكاترة (مش الإيرادات)
+    const doctorGrowth = sixMonths.map(({ label, year, month }) => {
+      const match = doctorGrowthRaw.find(
+        (r) => r._id.y === year && r._id.m === month + 1,
+      );
+      return { month: label, count: match?.count || 0 };
+    });
+
     // الإيرادات - إجمالي، حسب الخطة، وحسب آخر 6 شهور (بالجنيه، بعد تحويلها من القروش)
     const revenueTotalEGP = (revenueTotalRaw[0]?.totalCents || 0) / 100;
     const revenueByPlan = {};
@@ -192,6 +212,7 @@ const getDashboardStats = async (req, res) => {
           byMonth: revenueByMonth,
         },
         patientGrowth,
+        doctorGrowth,
         followupCompletion: {
           total: followupTotal,
           completed: followupCompleted,
