@@ -10,12 +10,14 @@ const {
 const startServer = async () => {
   await connectDB();
 
-  // شغل الـ check فور ما السيرفر يبدأ عشان نعوض أي followups فاتت
-  await checkExpiredFollowups();
-
-  app.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
+
+  checkExpiredFollowups().catch((err) => {
+    console.error("checkExpiredFollowups failed:", err.message);
+  });
+
 
   startFollowupCron();
 };
@@ -26,3 +28,5 @@ process.on("SIGINT", async () => {
 });
 
 startServer();
+
+module.exports = app;

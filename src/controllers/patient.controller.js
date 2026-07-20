@@ -19,9 +19,7 @@ const canAccessPatient = (user, patient) => {
   if (createdById === userId) return true;
 
   // نفس الفكرة لو doctors[] فيها عناصر populated بدل IDs عادية
-  return (patient.doctors || []).some(
-    (d) => String(d?._id || d) === userId,
-  );
+  return (patient.doctors || []).some((d) => String(d?._id || d) === userId);
 };
 
 // Build readable display fields for a structured medication, matching what
@@ -31,19 +29,26 @@ const canAccessPatient = (user, patient) => {
 const decorateMedicationForDisplay = (med) => {
   if (!med) return med;
 
-  const hasStructuredDosage = med.dosageAmount !== undefined && med.dosageUnit !== undefined;
-  const hasStructuredFrequency = med.frequencyCount !== undefined && med.frequencyPeriod !== undefined;
-  const hasStructuredDuration = med.durationValue !== undefined && med.durationUnit !== undefined;
+  const hasStructuredDosage =
+    med.dosageAmount !== undefined && med.dosageUnit !== undefined;
+  const hasStructuredFrequency =
+    med.frequencyCount !== undefined && med.frequencyPeriod !== undefined;
+  const hasStructuredDuration =
+    med.durationValue !== undefined && med.durationUnit !== undefined;
 
   return {
     ...med,
-    dosage: hasStructuredDosage ? `${med.dosageAmount}${med.dosageUnit}` : med.dosage || med.dose || '',
-    frequency: hasStructuredFrequency ? `${med.frequencyCount}x ${med.frequencyPeriod}` : med.frequency || '',
+    dosage: hasStructuredDosage
+      ? `${med.dosageAmount}${med.dosageUnit}`
+      : med.dosage || med.dose || "",
+    frequency: hasStructuredFrequency
+      ? `${med.frequencyCount}x ${med.frequencyPeriod}`
+      : med.frequency || "",
     duration: med.isChronic
-      ? 'Lifelong (Chronic)'
+      ? "Lifelong (Chronic)"
       : hasStructuredDuration
         ? `${med.durationValue} ${med.durationUnit}`
-        : med.duration || '',
+        : med.duration || "",
   };
 };
 
@@ -58,12 +63,7 @@ const getAllPatientsByDoctor = async (request, response) => {
       const allPatients = await Patient.find({
         $and: [
           { $or: [{ createdBy }, { doctors: createdBy }] },
-          {
-            $or: [
-              { name: { $regex: search, $options: "i" } },
-              { nationalID: { $regex: search, $options: "i" } },
-            ],
-          },
+          { name: { $regex: search, $options: "i" } },
         ],
       });
 
@@ -73,8 +73,13 @@ const getAllPatientsByDoctor = async (request, response) => {
         pagination: null,
       });
     }
-    const totalPatients = await Patient.countDocuments({$or:[{ createdBy},{ doctors:createdBy}]});
-    const allPatients = await Patient.find({$or:[{ createdBy},{ doctors:createdBy}]}).sort({ createdAt: -1 })
+    const totalPatients = await Patient.countDocuments({
+      $or: [{ createdBy }, { doctors: createdBy }],
+    });
+    const allPatients = await Patient.find({
+      $or: [{ createdBy }, { doctors: createdBy }],
+    })
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit));
 
@@ -113,7 +118,9 @@ const getPatientsByDoctorId = async (request, response) => {
     // مش بس المرضى اللي الدكتور ده أنشأهم (createdBy) - كمان المرضى اللي كانوا
     // موجودين قبل كده (أنشأهم دكتور تاني) وعمل الدكتور ده لهم consultation
     // (وده بيضيفه لـ patient.doctors تلقائي في createConsultation)
-    const doctorFilter = { $or: [{ createdBy: doctorId }, { doctors: doctorId }] };
+    const doctorFilter = {
+      $or: [{ createdBy: doctorId }, { doctors: doctorId }],
+    };
 
     const totalPatients = await Patient.countDocuments(doctorFilter);
     const patients = await Patient.find(doctorFilter)
@@ -155,10 +162,7 @@ const getAllPatients = async (request, response) => {
     const skip = (page - 1) * limit;
     if (search) {
       const allPatients = await Patient.find({
-        $or: [
-          { name: { $regex: search, $options: "i" } },
-          { nationalID: { $regex: search, $options: "i" } },
-        ],
+        name: { $regex: search, $options: "i" },
       }).sort({ createdAt: -1 });
 
       return response.status(200).json({
@@ -169,7 +173,10 @@ const getAllPatients = async (request, response) => {
     }
 
     const totalPatients = await Patient.countDocuments({});
-    const allPatients = await Patient.find({}).sort({ createdAt: -1 }).skip(skip).limit(Number(limit));
+    const allPatients = await Patient.find({})
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit));
 
     return response.status(200).json({
       success: true,
@@ -221,21 +228,43 @@ const createPatient = async (request, response) => {
       allergies,
       chronicConditions,
       chronicMedications,
-      nationalID,
+      phone,
     } = request.body;
     const createdBy = request.user.id;
 
-    if (!name || !dateOfBirth || !gender || !bloodType) {
+    if (!name || !dateOfBirth || !gender || !phone) {
       return response
         .status(400)
         .json({ success: false, message: "All fields are required" });
     }
 
-    // الرقم القومي اختياري - لو اتبعت، لازم يكون 14 رقم
-    if (nationalID && nationalID.length !== 14) {
-      return response
-        .status(400)
-        .json({ success: false, message: "National ID Must be 14 numbers" });
+    // تاريخ الميلاد مينفعش يكون في المستقبل
+    if (new Date(dateOfBirth) > new Date()) {
+      return response.status(400).json({
+        success: false,
+        message: "Date of birth cannot be in the future",
+      });
+    }
+
+    // لازم يكون رقم موبايل مصري صحيح (01 + 0/1/2/5 + 8 أرقام)
+    if (!/^01[0125][0-9]{8}$/.test(phone)) {
+      return response.status(400).json({
+        success: false,
+        message: "Invalid Egyptian mobile number",
+      });
+    }
+
+    // الرقم لازم يكون فريد بالنسبة لمرضى الدكتور ده بس - لو دكتور تاني
+    // عنده مريض بنفس الرقم فده مش تعارض، كل دكتور له نطاقه الخاص
+    const existingPatient = await Patient.findOne({
+      phone,
+      $or: [{ createdBy }, { doctors: createdBy }],
+    });
+    if (existingPatient) {
+      return response.status(409).json({
+        success: false,
+        message: "A patient with this phone number already exists",
+      });
     }
 
     const patient = await Patient.create({
@@ -247,7 +276,7 @@ const createPatient = async (request, response) => {
       chronicConditions,
       chronicMedications,
       createdBy,
-      nationalID,
+      phone,
     });
     return response.status(201).json({ success: true, data: patient });
   } catch (error) {
@@ -280,9 +309,10 @@ const deletePatient = async (request, response) => {
     await Consultation.deleteMany({ patientId: id });
     await Patient.findByIdAndDelete(id);
 
-    return response
-      .status(200)
-      .json({ success: true, message: "patient and all related records deleted successfully" });
+    return response.status(200).json({
+      success: true,
+      message: "patient and all related records deleted successfully",
+    });
   } catch (error) {
     return response
       .status(500)
@@ -303,6 +333,38 @@ const updatePatient = async (request, response) => {
         success: false,
         message: "Access denied. This patient is not under your care.",
       });
+    }
+
+    if (
+      request.body.dateOfBirth &&
+      new Date(request.body.dateOfBirth) > new Date()
+    ) {
+      return response.status(400).json({
+        success: false,
+        message: "Date of birth cannot be in the future",
+      });
+    }
+
+    if (request.body.phone) {
+      if (!/^01[0125][0-9]{8}$/.test(request.body.phone)) {
+        return response.status(400).json({
+          success: false,
+          message: "Invalid Egyptian mobile number",
+        });
+      }
+
+      const createdBy = request.user.id;
+      const duplicate = await Patient.findOne({
+        _id: { $ne: id },
+        phone: request.body.phone,
+        $or: [{ createdBy }, { doctors: createdBy }],
+      });
+      if (duplicate) {
+        return response.status(409).json({
+          success: false,
+          message: "A patient with this phone number already exists",
+        });
+      }
     }
 
     const updatedPatient = await Patient.findByIdAndUpdate(id, request.body, {
@@ -327,7 +389,7 @@ const getPatientHistory = async (req, res) => {
 
     const patient = await Patient.findById(patientId)
       .select(
-        "name dateOfBirth gender bloodType allergies chronicConditions chronicMedications createdBy discontinuedMedications",
+        "name phone dateOfBirth gender bloodType allergies chronicConditions chronicMedications createdBy discontinuedMedications",
       )
       .populate("createdBy", "name specialty email");
 
@@ -551,7 +613,6 @@ module.exports = {
   getAllPatientsByDoctor,
   getPatientsByDoctorId,
   getPatientHistory,
-
 
   discontinueMedication,
   reactivateMedication,

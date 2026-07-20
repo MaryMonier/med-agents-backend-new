@@ -3,7 +3,15 @@ const mongoose = require("mongoose");
 const patientSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
-    nationalID: { type: String },
+    // رقم موبايل مصري (01 + رقم من 0/1/2/5 + 8 أرقام = 11 رقم بالظبط).
+    // الفريدة (unique) بتتحقق على مستوى الكونترولر لكل دكتور لوحده (مش
+    // unique index على مستوى الداتابيز كله)، عشان دكتورين مختلفين ممكن
+    // يكون عندهم مريض بنفس الرقم من غير مشكلة
+    phone: {
+      type: String,
+      required: true,
+      match: [/^01[0125][0-9]{8}$/, "Invalid Egyptian mobile number"],
+    },
     dateOfBirth: { type: Date, required: true },
     gender: { type: String, enum: ["male", "female"], required: true },
     bloodType: {

@@ -99,7 +99,7 @@ const renewSubscription = async (req, res) => {
 };
 const getDoctorsSubscriptions = async (req, res) => {
   try {
-    const { search = "", page = 1, limit = 10 } = req.query;
+    const { search = "", status = "", plan = "", page = 1, limit = 10 } = req.query;
 
     const currentPage = Number(page);
     const pageSize = Number(limit);
@@ -123,6 +123,14 @@ const getDoctorsSubscriptions = async (req, res) => {
           },
         },
       ];
+    }
+
+    if (status) {
+      filter["subscription.status"] = status;
+    }
+
+    if (plan) {
+      filter["subscription.plan"] = plan;
     }
 
     const totalDoctors = await User.countDocuments(filter);
@@ -191,8 +199,35 @@ const getDoctorsSubscriptions = async (req, res) => {
 
 
 
+
+// للأدمن بس - يلغي اشتراك الدكتور فوراً
+const unsubscribeDoctor = async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+
+    const user = await User.findById(doctorId);
+
+    if (!user || user.role !== "doctor") {
+      return res.status(404).json({ success: false, message: "Doctor not found" });
+    }
+
+    user.subscription.status = "expired";
+    user.subscription.subscriptionEnd = new Date();
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Subscription cancelled successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getMySubscription,
   renewSubscription
   ,getDoctorsSubscriptions
+  ,unsubscribeDoctor
 };
