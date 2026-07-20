@@ -16,15 +16,16 @@ const {
 const checkSubscription = require("../middleware/checkSubscription.middleware");
 
 // ⚠️ الراوتس الثابتة لازم تكون قبل الـ dynamic routes
-router.get("/drugs/search", authMiddleware, searchDrugs);
-router.post("/safety-check", authMiddleware, checkPrescriptionSafety);
-router.get("/dates", authMiddleware, getPrescriptionDates);
-router.get("/", authMiddleware, getAllPrescriptions);
+router.get("/drugs/search", authMiddleware, checkSubscription, searchDrugs);
+router.post("/safety-check", authMiddleware, checkSubscription, checkPrescriptionSafety);
+router.get("/dates", authMiddleware, checkSubscription, getPrescriptionDates);
+router.get("/", authMiddleware, checkSubscription, getAllPrescriptions);
 
-router.post("/", authMiddleware, createPrescription);
+router.post("/", authMiddleware, checkSubscription, createPrescription);
 router.get(
   "/consultation/:consultationId",
   authMiddleware,
+  checkSubscription,
   getPrescriptionByConsultation,
 );
 
