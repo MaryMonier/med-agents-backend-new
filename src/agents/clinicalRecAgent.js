@@ -13,6 +13,8 @@ const runClinicalRecAgent = async ({
   previousSymptoms = "",
   previousInstructions = "",
   previousPrescription = "",
+  patientAge = null,
+  patientGender = null,
 }) => {
   const formattedSymptoms =
     Array.isArray(symptoms) && symptoms.length
@@ -61,7 +63,12 @@ ${followupBlock}
 STRICT RULES:
 - Respond ONLY in ${language === "ar" ? "Arabic" : "English"}
 - Output ONLY valid JSON, no extra text
-
+- ALWAYS factor the patient's age and gender (given below) into your reasoning BEFORE settling
+  on a diagnosis/urgency — some conditions are age- or gender-specific, more/less likely at
+  certain ages, or present differently by age (e.g. pediatric vs. elderly presentations,
+  pregnancy-related considerations for female patients of reproductive age, age-typical causes
+  of a given symptom). If age or gender is unknown, reason as generally as the evidence allows
+  and don't assume unstated demographic risk factors.
 
 URGENCY LEVEL DEFINITIONS:
 - "low": mild medical symptoms (cold, mild headache, minor fatigue, skin rash)
@@ -76,6 +83,8 @@ IMPORTANT: If rawInput and symptoms contain NO medical terms at all, you MUST re
 Doctor Input: ${rawInput}
 Symptoms: ${formattedSymptoms}
 Diagnosis: ${diagnosis || "Not yet determined"}
+Patient age: ${patientAge !== null ? `${patientAge} years old` : "Unknown"}
+Patient gender: ${patientGender || "Unknown"}
 
 Return JSON only:
 {

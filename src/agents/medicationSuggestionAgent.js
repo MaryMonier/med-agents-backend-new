@@ -87,6 +87,7 @@ const runMedicationSuggestionAgent = async ({
   language = "en",
   isFollowup = false,
   previousPrescription = [],
+  recentlyPrescribedForSameDiagnosis = [],
 }) => {
   if (!diagnosis || !diagnosis.trim()) {
     return { success: false, message: "Diagnosis is required", data: [] };
@@ -144,16 +145,39 @@ State the change (or the decision to keep it) briefly in "reason" (e.g. "no impr
 `
         : "";
 
+    // عشان الإيجنت ميرجعش نفس الكومبينيشن بالظبط كل مرة لنفس التشخيص - بنديله
+    // شفافية على آخر مرات كتب فيها دواء لنفس التشخيص للمريض ده (من زيارات
+    // سابقة مختلفة، مش الفولو أب الحالي)، ونطلب منه يفكر في بديل معقول لو
+    // فيه أكتر من خيار أول-خط صالح طبيًا
+    const varietyBlock =
+      !isFollowup && recentlyPrescribedForSameDiagnosis.length > 0
+        ? `
+
+VARIETY: For this same diagnosis, this patient was recently prescribed: ${recentlyPrescribedForSameDiagnosis.join(", ")}.
+If there is more than one clinically valid first-line option for this diagnosis (per WHO
+guidelines), prefer a reasonable alternative to what's listed above instead of defaulting to
+the exact same drug again — unless the diagnosis/guidelines genuinely only support one specific
+option, or the patient's specific presentation makes that same drug clearly the best choice
+again. Do not force a worse or unusual choice just for the sake of variety — this only applies
+when multiple options are truly equivalent.
+`
+        : "";
+
     const systemPrompt = `You are a medication-planning assistant for a licensed doctor. Suggest an INITIAL prescription plan based on an already-confirmed diagnosis. Do not re-diagnose.
 
 Rules:
 - Text fields in ${lang} (drug names stay in standard English/generic form)
 - Output ONLY raw minified JSON — no markdown, no whitespace/newlines, no explanation
-- Suggest as many medications as are CLINICALLY APPROPRIATE for this diagnosis (up to 3) — do not default to just one out of caution. If standard practice for this diagnosis is combination therapy, or if this is a follow-up showing inadequate response to a single agent, suggest the full appropriate regimen, not just one drug.
+- Base your choices on WHO treatment guidelines / WHO Model List of Essential Medicines for this
+  diagnosis where one exists — prefer WHO first-line recommended agents over alternatives, unless
+  the patient's allergies/active medications/age rule them out
+- Suggest as many medications as are CLINICALLY APPROPRIATE for this diagnosis (up to 4 total, including any symptomatic/protective add-ons below) — do not default to just one out of caution. If standard practice for this diagnosis is combination therapy, or if this is a follow-up showing inadequate response to a single agent, suggest the full appropriate regimen, not just one drug.
+- SYMPTOMATIC RELIEF: if the symptoms or doctor's notes mention pain/ache/soreness of any kind, include a short-course analgesic appropriate for the diagnosis and pain severity (e.g. paracetamol for mild pain; escalate per WHO pain ladder only if the description indicates moderate/severe pain) — don't leave pain unaddressed just because it's not the primary diagnosis.
+- GASTRIC PROTECTION: if the plan (including the patient's existing active medications) includes any drug well-known to irritate the stomach or GI tract (e.g. NSAIDs, aspirin, oral corticosteroids), add a gastroprotective agent (e.g. a PPI) to the plan, unless one is already active or clearly not needed for a very short course.
 - Consider allergies and active medications; don't repeat an active med (unless a dose change is clearly needed); avoid known allergy conflicts
 - "reason" is max 8 words, tied to diagnosis/symptoms
 - This is a draft for doctor review, not final
-${followupBlock}
+${followupBlock}${varietyBlock}
 JSON shape (minified, no pretty-printing):
 {"medications":[{"name":str,"activeIngredient":str|null,"dosageAmount":num,"dosageUnit":"mg"|"mcg"|"g","frequencyCount":num,"frequencyPeriod":"per day"|"per week"|"per month","durationValue":num|null,"durationUnit":"days"|"weeks"|"months"|null,"isChronic":bool,"reason":str}]}
 If isChronic is true, durationValue/durationUnit must be null.`;
@@ -188,7 +212,7 @@ Active meds: ${activeMedsList}`;
     let parsed;
     try {
       // المحاولة الأساسية: ميزانية توكينز صغيرة كفاية لـ 3 أدوية مضغوطة
-      parsed = await callAndParse(1100);
+      parsed = await callAndParse(1400);
     } catch (firstErr) {
       // نادر جدًا بعد التصغير، بس لو حصل قطع برضو، نجرب مرة واحدة بس
       // بمساحة أكبر شوية بدل ما نفشل على طول
@@ -196,7 +220,7 @@ Active meds: ${activeMedsList}`;
         "Medication Suggestion Agent: first attempt failed to parse, retrying with more room...",
       );
       try {
-        parsed = await callAndParse(1700);
+        parsed = await callAndParse(2000);
       } catch (secondErr) {
         console.error(
           "Medication Suggestion Agent: failed to parse JSON after retry:",

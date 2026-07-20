@@ -181,6 +181,7 @@ const runQuickCheckForMedications = async (
       allergies,
       patientAge: age,
       patientGender: patient?.gender || null,
+      chronicConditions: patient?.chronicConditions || [],
       language: "en",
     });
 

@@ -314,7 +314,8 @@ const getConsultationById = async (req, res) => {
     }
     if (
       req.user.role !== "admin" &&
-      String(consultation.doctorId?._id || consultation.doctorId) !== String(req.user.id)
+      String(consultation.doctorId?._id || consultation.doctorId) !==
+        String(req.user.id)
     ) {
       return res.status(403).json({
         success: false,
@@ -589,7 +590,27 @@ const getAIRecommendation = async (req, res) => {
       previousSymptoms,
       previousInstructions,
       previousPrescription,
+      patientId,
     } = req.body;
+
+    let patientAge = null;
+    let patientGender = null;
+    if (patientId) {
+      const patient =
+        await Patient.findById(patientId).select("dateOfBirth gender");
+      if (patient) {
+        patientGender = patient.gender || null;
+        if (patient.dateOfBirth) {
+          const today = new Date();
+          const birth = new Date(patient.dateOfBirth);
+          patientAge = today.getFullYear() - birth.getFullYear();
+          const m = today.getMonth() - birth.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+            patientAge--;
+          }
+        }
+      }
+    }
 
     const agentResult = await runClinicalRecAgent({
       rawInput,
@@ -603,6 +624,8 @@ const getAIRecommendation = async (req, res) => {
       previousSymptoms: previousSymptoms || "",
       previousInstructions: previousInstructions || "",
       previousPrescription: previousPrescription || "",
+      patientAge,
+      patientGender,
     });
 
     res.status(200).json({
@@ -640,6 +663,7 @@ const getMedicationSuggestions = async (req, res) => {
     let allergies = [];
     let activeMedications = [];
     let patientAge = null;
+    let recentlyPrescribedForSameDiagnosis = [];
 
     if (patientId) {
       const patient = await Patient.findById(patientId).select(
@@ -658,6 +682,33 @@ const getMedicationSuggestions = async (req, res) => {
         }
       }
       activeMedications = await getAllActiveMedicationsForPatient(patientId);
+
+      // عشان التنوع: بندور على زيارات سابقة لنفس المريض بنفس التشخيص
+      // (تطابق نص كامل، case-insensitive) مش الفولو أب الحالي، ونجمع أسماء
+      // الأدوية اللي اتوصفت فيها - عشان الإيجنت يعرف مايكررش نفس الاختيار
+      // كل مرة من غير داعي طبي
+      if (!isFollowup) {
+        const pastConsultations = await Consultation.find({
+          patientId,
+          diagnosis: { $regex: `^${diagnosis.trim()}$`, $options: "i" },
+        })
+          .select("_id")
+          .limit(10);
+
+        if (pastConsultations.length > 0) {
+          const pastPrescriptions = await Prescription.find({
+            consultationId: { $in: pastConsultations.map((c) => c._id) },
+          }).select("medications");
+
+          const names = new Set();
+          pastPrescriptions.forEach((presc) => {
+            presc.medications.forEach((m) => {
+              if (m.name) names.add(m.name);
+            });
+          });
+          recentlyPrescribedForSameDiagnosis = [...names];
+        }
+      }
     }
 
     const result = await runMedicationSuggestionAgent({
@@ -670,6 +721,7 @@ const getMedicationSuggestions = async (req, res) => {
       language: language || "en",
       isFollowup: !!isFollowup,
       previousPrescription: previousPrescription || [],
+      recentlyPrescribedForSameDiagnosis,
     });
 
     if (!result.success) {
