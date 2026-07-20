@@ -20,6 +20,7 @@ const followupAgentRouter = require("./routes/followupAgentRoutes");
 const app = express();
 const medicalAgentRouter = require("./routes/medicalAgentRoutes");
 const reportGenRoutes = require("./routes/reportGen.routes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 
 app.set("trust proxy", 1);
 
@@ -60,6 +61,7 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api/report", reportGenRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 app.use(errorHandler);
 
