@@ -100,14 +100,6 @@ npm start
 - `checkSubscription` — blocks access to core clinical routes when the doctor's subscription
   is not `trial` (unexpired) or `active`, returning a `SUBSCRIPTION_EXPIRED` error code
 
-## Known Issues / TODO
-
-- Audit ownership checks on all consultation/prescription endpoints (some list/delete endpoints
-  currently lack a doctor-ownership check — see internal review notes).
-- Restrict CORS to `FRONTEND_URL` instead of allowing all origins.
-- Whitelist updatable fields on patient/consultation update endpoints instead of passing the
-  raw request body to `findByIdAndUpdate`.
-
 ## License
 
 Internal project — license TBD.
