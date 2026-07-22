@@ -359,7 +359,7 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote followupId rawInput createdAt",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote clinicalReading possibleDiagnoses followupId rawInput createdAt",
       )
       .sort({ createdAt: -1 });
 
@@ -372,12 +372,20 @@ const getPatientHistory = async (req, res) => {
         return {
           consultationId: consultation._id,
           date: consultation.createdAt,
+          // الترتيب المنطقي اللي بنرجعه هنا (أعراض ← ملاحظات الدكتور ←
+          // رؤية إيجنت التشخيص التفريقي ← تشخيص الدكتور ← الروشتة) هو
+          // نفسه الترتيب اللي بيتعرض بيه في الـ Patient History في الفرونت
           symptoms: consultation.symptoms,
-          diagnosis: consultation.diagnosis || "Not determined yet",
-          urgencyLevel: consultation.urgencyLevel,
-          suggestedSpecialist: consultation.suggestedSpecialist || null,
-          structuredNote: consultation.structuredNote || null,
           doctorNotes: consultation.rawInput || null,
+          // رؤية إيجنت التشخيص التفريقي (Differential Diagnosis Agent):
+          // القطع المنظمة أول لو موجودة (كونسلتيشنز جديدة)، وstructuredNote
+          // كـ fallback للكونسلتيشنز القديمة اللي اتسجلت قبل إضافة الحقول دي
+          clinicalReading: consultation.clinicalReading || null,
+          possibleDiagnoses: consultation.possibleDiagnoses || [],
+          structuredNote: consultation.structuredNote || null,
+          suggestedSpecialist: consultation.suggestedSpecialist || null,
+          urgencyLevel: consultation.urgencyLevel,
+          diagnosis: consultation.diagnosis || "Not determined yet",
           isFollowup: !!consultation.followupId,
           prescription: prescription
             ? {

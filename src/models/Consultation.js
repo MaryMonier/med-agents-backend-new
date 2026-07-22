@@ -21,6 +21,29 @@ const consultationSchema = new mongoose.Schema(
       enum: ["low", "medium", "critical", "unknown"],
     },
     suggestedSpecialist: { type: String },
+    // القطع المنظمة الخام اللي بيرجعها إيجنت التشخيص التفريقي (Differential
+    // Diagnosis Agent) - محفوظة منفصلة عن structuredNote (النص المجمّع) عشان
+    // الـ Patient History وأي شاشة تانية تقدر تعرضهم في أقسام منظمة
+    clinicalReading: { type: String },
+    possibleDiagnoses: [
+      {
+        _id: false,
+        diagnosis: { type: String },
+        likelihood: {
+          type: String,
+          enum: ["high", "moderate", "low"],
+        },
+        // ليه محتمل
+        supportingReasoning: { type: String },
+        // ليه مش محتمل / أقل تأكيد
+        againstReasoning: { type: String },
+        // فحوصات/أشعة موصى بيها لإثبات أو استبعاد التشخيص ده
+        recommendedTests: { type: String },
+        // بروتوكول العلاج الخاص بالتشخيص ده تحديدًا لو اتأكد - كل تشخيص
+        // بروتوكوله بتاعه، مش بروتوكول واحد عام للحالة كلها
+        protocol: { type: String },
+      },
+    ],
     // لو الدكتور حدد إن الدايجنوزز دي مرض مزمن، بنضيفها لـ Patient.chronicConditions
     isChronic: { type: Boolean, default: false },
     status: {

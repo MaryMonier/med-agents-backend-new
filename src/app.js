@@ -56,7 +56,7 @@ app.get("/", (req, res) => {
 });
 
 
-app.use("/api/report", reportGenRoutes);
+app.use("/api/reports", reportGenRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 
 

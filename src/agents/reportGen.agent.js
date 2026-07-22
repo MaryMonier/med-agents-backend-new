@@ -47,12 +47,46 @@ const reportGenAgent = async ({
           ? "غير معروف"
           : "Unknown";
 
+      // رؤية إيجنت التشخيص التفريقي (Differential Diagnosis Agent): بنفضّل
+      // القطع المنظمة (clinicalReading + possibleDiagnoses، وكل تشخيص فيها
+      // معاه بروتوكوله الخاص) لو موجودة، ولو لأ (كونسلتيشن قديمة قبل إضافة
+      // الحقول دي) بنرجع للنص المجمّع structuredNote كـ fallback
+      const formatDiagnosesList = (list) =>
+        (list || [])
+          .map((d) =>
+            language === "ar"
+              ? `${d.diagnosis} (${d.likelihood}) — مؤيد: ${d.supportingReasoning}؛ غير مؤيد: ${d.againstReasoning}؛ فحوصات: ${d.recommendedTests}؛ بروتوكول العلاج: ${d.protocol}`
+              : `${d.diagnosis} (${d.likelihood}) — for: ${d.supportingReasoning}; against: ${d.againstReasoning}; tests: ${d.recommendedTests}; protocol: ${d.protocol}`,
+          )
+          .join(" | ");
+
+      const differentialDiagnosisInsight =
+        c.clinicalReading || c.possibleDiagnoses?.length
+          ? language === "ar"
+            ? [
+                c.clinicalReading ? `القراءة السريرية: ${c.clinicalReading}` : null,
+                c.possibleDiagnoses?.length
+                  ? `التشخيص التفريقي: ${formatDiagnosesList(c.possibleDiagnoses)}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" | ")
+            : [
+                c.clinicalReading ? `Clinical reading: ${c.clinicalReading}` : null,
+                c.possibleDiagnoses?.length
+                  ? `Differential diagnosis: ${formatDiagnosesList(c.possibleDiagnoses)}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" | ")
+          : c.structuredNote || (language === "ar" ? "لا يوجد" : "N/A");
+
       if (language === "ar") {
         return `
 [كونسلتيشن — ${date}]
 الأعراض: ${c.symptoms?.join("، ") || "غير محدد"}
 التشخيص: ${c.diagnosis || "غير محدد"}
-الملاحظة السريرية: ${c.structuredNote || "لا يوجد"}
+رؤية إيجنت التشخيص التفريقي: ${differentialDiagnosisInsight}
 مستوى الخطورة: ${c.urgencyLevel || "غير محدد"}
 التخصص المقترح: ${c.suggestedSpecialist || "لا يوجد"}
 الأدوية: ${meds}
@@ -62,7 +96,7 @@ const reportGenAgent = async ({
 [Consultation — ${date}]
 Symptoms: ${c.symptoms?.join(", ") || "N/A"}
 Diagnosis: ${c.diagnosis || "Not determined"}
-Clinical Note: ${c.structuredNote || "N/A"}
+Differential Diagnosis Agent Insight: ${differentialDiagnosisInsight}
 Urgency: ${c.urgencyLevel || "N/A"}
 Specialist: ${c.suggestedSpecialist || "None"}
 Medications: ${meds}

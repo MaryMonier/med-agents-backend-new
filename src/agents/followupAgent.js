@@ -56,7 +56,7 @@ Return JSON:
 }
       `;
 
-  // نفس فكرة الـ clinicalRecAgent: نعيد المحاولة لحد 3 مرات قبل ما نرجّع فولباك
+  // نفس فكرة الـ differentialDiagnosisAgent: نعيد المحاولة لحد 3 مرات قبل ما نرجّع فولباك
   const MAX_ATTEMPTS = 3;
   let lastError;
 
@@ -117,7 +117,7 @@ const generateFollowupPlan = async (req, res, next) => {
     const prescription = await Prescription.findOne({ consultationId });
 
     const patientSummary = `${patient?.name}, ${patient?.gender}, allergies: ${patient?.allergies?.join(', ') || 'None'}, chronic conditions: ${patient?.chronicConditions?.join(', ') || 'None'}`;
-    const consultationSummary = `Symptoms: ${consultation.symptoms?.join(', ')}. Clinical note: ${consultation.structuredNote}. Urgency: ${consultation.urgencyLevel}. Suggested specialist: ${consultation.suggestedSpecialist}`;
+    const consultationSummary = `Symptoms: ${consultation.symptoms?.join(', ')}. Differential diagnosis agent note: ${consultation.structuredNote}. Urgency: ${consultation.urgencyLevel}. Suggested specialist: ${consultation.suggestedSpecialist}`;
     const medications = prescription?.medications?.map(m => `${m.name} ${m.dose} ${m.frequency}`) || [];
 
     const result = await runFollowupAgent({

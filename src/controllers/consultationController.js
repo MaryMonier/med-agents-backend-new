@@ -3,7 +3,9 @@ const Patient = require("../models/Patient");
 const Followup = require("../models/Followup");
 const Prescription = require("../models/Prescription");
 
-const { runClinicalRecAgent } = require("../agents/clinicalRecAgent");
+const {
+  runDifferentialDiagnosisAgent,
+} = require("../agents/differentialDiagnosisAgent");
 const {
   runMedicationSuggestionAgent,
 } = require("../agents/medicationSuggestionAgent");
@@ -117,6 +119,12 @@ const createConsultation = async (req, res) => {
       structuredNote,
       suggestedSpecialist,
       urgencyLevel,
+      // القطع المنظمة الخام لإيجنت التشخيص التفريقي (Differential Diagnosis
+      // Agent) - بنحفظهم منفصلين عن structuredNote عشان الـ Patient History
+      // يقدر يعرضهم في أقسام منظمة (قراءة سريرية / تشخيص تفريقي / بروتوكول)
+      // مش بس نص واحد مجمّع
+      clinicalReading,
+      possibleDiagnoses,
     } = req.body;
 
     const patient = await Patient.findById(patientId);
@@ -174,6 +182,10 @@ const createConsultation = async (req, res) => {
       structuredNote: structuredNote || rawInput,
       suggestedSpecialist: suggestedSpecialist || null,
       urgencyLevel: urgencyLevel || "unknown",
+      clinicalReading: clinicalReading || null,
+      possibleDiagnoses: Array.isArray(possibleDiagnoses)
+        ? possibleDiagnoses
+        : [],
       isChronic: !!isChronic,
       language: language || "en",
       status: "completed",
@@ -612,7 +624,7 @@ const getAIRecommendation = async (req, res) => {
       }
     }
 
-    const agentResult = await runClinicalRecAgent({
+    const agentResult = await runDifferentialDiagnosisAgent({
       rawInput,
       symptoms,
       diagnosis,

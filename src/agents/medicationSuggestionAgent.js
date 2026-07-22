@@ -168,6 +168,16 @@ when multiple options are truly equivalent.
 Rules:
 - Text fields in ${lang} (drug names stay in standard English/generic form)
 - Output ONLY raw minified JSON — no markdown, no whitespace/newlines, no explanation
+- DIAGNOSIS FIDELITY: Read the diagnosis text precisely, including every qualifier in it (type,
+  stage, severity, acute vs. chronic, first episode vs. recurrence, etc.) — do NOT pattern-match
+  on just the general disease name and ignore the qualifier. Choose the first-line treatment that
+  is standard specifically for THAT exact subtype, not a generic treatment for the broader disease
+  category. For example: "Type 2 Diabetes Mellitus" is first managed with lifestyle measures plus
+  an oral agent — metformin is the WHO/standard first-line choice; insulin is NOT the default
+  first-line choice for type 2 and must only be suggested if the diagnosis or notes specifically
+  indicate a reason for it (e.g. severe/uncontrolled hyperglycemia, contraindication to oral
+  agents, or the diagnosis is actually Type 1). Never let a keyword match override the exact
+  subtype stated in the diagnosis.
 - Base your choices on WHO treatment guidelines / WHO Model List of Essential Medicines for this
   diagnosis where one exists — prefer WHO first-line recommended agents over alternatives, unless
   the patient's allergies/active medications/age rule them out
