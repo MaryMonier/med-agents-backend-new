@@ -354,6 +354,20 @@ const syncChronicMedicationsToPatient = async (patient, medications) => {
   await patient.save();
 };
 
+// ─── Helper: derive the Prescription's top-level "warnings" array from the
+// per-medication quickCheckMessage results ───────────────────────────────
+// ملحوظة مهمة: كان فيه حقلين "warnings" و"interactions" على موديل الروشتة
+// من زمان (وريبورت الـ AI بيقرا منهم: reportGen.agent.js)، بس من غير ما
+// حد يحطهم فعليًا وقت الحفظ - يعني كانوا فاضيين دايمًا ("None") حتى لو فيه
+// مشاكل سلامة حقيقية اتكشفت. السبب: النظام اتحول من إيجنت تفصيلي قديم لنظام
+// "Quick Drug Check" الأسرع اللي بيرجع رسالة قصيرة لكل دواء (quickCheckMessage)
+// لكن محدش وصّل الرسايل دي لحقل الـ warnings تاني. هنا بنجمعهم كـ "الاسم:
+// الرسالة" لكل دواء عنده مشكلة، عشان الحقل يبقى فيه بيانات حقيقية تاني.
+const deriveWarningsFromQuickCheck = (medications = []) =>
+  medications
+    .filter((m) => m.quickCheckMessage)
+    .map((m) => `${m.name}: ${m.quickCheckMessage}`);
+
 const createPrescription = async (req, res, next) => {
   try {
     const { consultationId, patientId, medications, language } = req.body;
@@ -403,6 +417,7 @@ const createPrescription = async (req, res, next) => {
       patientId,
       doctorId: req.user.id,
       medications: medicationsWithQuickCheck,
+      warnings: deriveWarningsFromQuickCheck(medicationsWithQuickCheck),
       language: language || consultation.language,
     });
 
@@ -661,7 +676,10 @@ const updatePrescription = async (req, res, next) => {
     const updated = await Prescription.findByIdAndUpdate(
       req.params.id,
       {
-        ...(medications && { medications: updatedMedications }),
+        ...(medications && {
+          medications: updatedMedications,
+          warnings: deriveWarningsFromQuickCheck(updatedMedications),
+        }),
         ...(language && { language }),
       },
       { new: true, runValidators: true },

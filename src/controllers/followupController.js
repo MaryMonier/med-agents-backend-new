@@ -3,6 +3,31 @@ const Followup = require("../models/Followup");
 const Consultation = require("../models/Consultation");
 require("../models/Patient");
 
+// أي فولو أب لسه "pending" وميعادها المجدول (scheduledDate) فات من غير ما
+// تتكمّل، بتتحول تلقائيًا لـ "cancelled" في الداتا بيز نفسها (مش مجرد شكل
+// في الفرونت) - عشان الدكتور مايقدرش يعمل "Start" لفولو أب فاتها ميعادها
+// أصلًا، ولازم بدل منها يعمل فولو أب/كونسلتيشن جديدة لو المريض جه متأخر.
+//
+// ملحوظة: فيه فعلًا cron job جاهز في src/jobs/followupCron.js بيعمل نفس
+// الحاجة يوميًا الساعة 00:00 (توقيت مصر)، لكنه مش متشغّل من أي مكان (مفيش
+// أي استدعاء لـ startFollowupCron() في السيرفر) - يعني ده كان الباج الحقيقي.
+// الشيك ده هنا بيغطي المشكلة فورًا بدون الاعتماد على تشغيل الكرون، لأنه
+// بيتنفذ كـ lazy check كل مرة الفولو أبس بتتقرا (list أو details) - أي فولو
+// أب فاتت بتتحول أول ما حد يفتح الصفحة، مش لازم تستنى نص الليل.
+const autoCancelPastDueFollowups = async (extraFilter = {}) => {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  await Followup.updateMany(
+    {
+      ...extraFilter,
+      status: "pending",
+      scheduledDate: { $lt: startOfToday },
+    },
+    { $set: { status: "cancelled" } },
+  );
+};
+
 const createFollowup = async (req, res) => {
   try {
     const {
@@ -74,6 +99,9 @@ const getFollowups = async (req, res) => {
     const filter = isAdmin
       ? { patientId: { $ne: null } }
       : { patientId: { $ne: null }, doctorId: req.user.id };
+
+    await autoCancelPastDueFollowups(filter);
+
     const followups = await Followup.find(filter)
       .populate("patientId", "name phone")
       .populate({
@@ -122,6 +150,8 @@ const getFollowupsByDoctorId = async (req, res) => {
         message: "Access denied. You can only view your own follow-ups.",
       });
     }
+
+    await autoCancelPastDueFollowups({ doctorId });
 
     const followups = await Followup.find({ doctorId })
       .populate("patientId", "name phone")
@@ -198,6 +228,19 @@ const getFollowupById = async (req, res) => {
         success: false,
         message: "Access denied. You can only view your own follow-ups.",
       });
+    }
+
+    // نفس فكرة الليستة: لو الفولو أب دي لسه pending وميعادها فات، نحوّلها
+    // cancelled في الداتا بيز قبل ما نرجعها، بدل ما تفضل ظاهرة pending
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (
+      followup.status === "pending" &&
+      followup.scheduledDate &&
+      new Date(followup.scheduledDate) < startOfToday
+    ) {
+      followup.status = "cancelled";
+      await followup.save();
     }
 
     res.status(200).json({

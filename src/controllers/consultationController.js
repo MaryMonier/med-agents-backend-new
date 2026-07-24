@@ -753,7 +753,6 @@ module.exports = {
   updateConsultation,
   deleteConsultation,
   getAllConsultationsByDoctor,
-
   getConsultationsByDoctorId,
   getAIRecommendation,
   getMedicationSuggestions,
