@@ -42,6 +42,17 @@ const consultationSchema = new mongoose.Schema(
         // بروتوكول العلاج الخاص بالتشخيص ده تحديدًا لو اتأكد - كل تشخيص
         // بروتوكوله بتاعه، مش بروتوكول واحد عام للحالة كلها
         protocol: { type: String },
+        // شفافية: هل التشخيص/البروتوكول ده مبني فعليًا على مرجع موثّق
+        // (Pinecone/PubMed/MedlinePlus) ولا معرفة عامة للموديل - بيرجعها
+        // الإيجنت نفسه (differentialDiagnosisAgent) صراحة، مش تحقق مطلق من
+        // صحة المعلومة، لكنه بيدي الدكتور فكرة واضحة عن مصدر كل بند قبل ما
+        // يعتمد عليه. القيمة الافتراضية "general_knowledge" لو الحقل مش
+        // موجود (كونسلتيشنز قديمة قبل إضافة الميزة دي)
+        evidenceBasis: {
+          type: String,
+          enum: ["referenced", "general_knowledge"],
+          default: "general_knowledge",
+        },
       },
     ],
     // لو الدكتور حدد إن الدايجنوزز دي مرض مزمن، بنضيفها لـ Patient.chronicConditions

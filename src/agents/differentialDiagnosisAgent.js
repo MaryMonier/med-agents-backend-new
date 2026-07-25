@@ -51,15 +51,70 @@ const runDifferentialDiagnosisAgent = async ({
       ? symptoms.join(", ")
       : "Not specified";
 
-  // لو الـ RAG retrieval فشل، نكمّل من غير context بدل ما نفشّل الطلب كله
+  // ─── بناء السياق المرجعي من عدة مصادر ──────────────────────────────────
+  // بدل ما نعتمد على Pinecone بس (10 مواضيع ثابتة + مقالات PubMed مخزّنة
+  // وقت الـ seed)، بندور بالترتيب التالي، وكل مصدر بيتحط في السياق موسوم
+  // باسمه صراحة عشان الموديل (والدكتور اللي بيراجع لاحقًا) يعرف مصدر كل
+  // معلومة، مش يتلخبطوا في سلة واحدة:
+  //   1. Pinecone (أسرع، مفهرس مسبقًا)
+  //   2. PubMed live - لو Pinecone مالقاش حاجة، بنسأل PubMed مباشرة (نفس
+  //      المنطق المستخدم في medicalAgent) بدل ما نكمل من غير أي مرجع خالص
+  //   3. MedlinePlus (NIH/NLM) - طبقة إضافية دايمًا (مش بديلة) بتدي ملخصات
+  //      سريرية معتمدة، بتوسّع التغطية لمواضيع مش موجودة في الـ 10 مواضيع
+  //      الثابتة أصلاً
+  // hasGroundedContext بتتبع لو لقينا أي مرجع حقيقي، عشان نطلب من الموديل
+  // يوضح صراحة في رده أي جزء مبني على المراجع دي وأي جزء من معرفته العامة
+  // (evidenceBasis) بدل ما نسيب ده غامض.
   let context = "";
+  let hasGroundedContext = false;
+
   try {
     const ragDocs = await retrieve(formattedSymptoms, language, 3);
-    context = formatContext(ragDocs, language);
+    if (ragDocs.length > 0) {
+      context = formatContext(ragDocs, language);
+      hasGroundedContext = true;
+    }
   } catch (ragError) {
     console.error(
-      "RAG retrieval failed, continuing without context:",
+      "Pinecone retrieval failed, continuing without it:",
       ragError.message,
+    );
+  }
+
+  if (!hasGroundedContext) {
+    try {
+      const {
+        searchPubMed,
+        formatPubMedContext,
+      } = require("../services/pubmed.service");
+      const pubmedArticles = await searchPubMed(formattedSymptoms, 3);
+      if (pubmedArticles.length > 0) {
+        context = formatPubMedContext(pubmedArticles);
+        hasGroundedContext = true;
+      }
+    } catch (pubmedError) {
+      console.error(
+        "PubMed retrieval failed, continuing without it:",
+        pubmedError.message,
+      );
+    }
+  }
+
+  try {
+    const {
+      searchMedlinePlus,
+      formatMedlinePlusContext,
+    } = require("../services/medlineplus.service");
+    const medlineTopics = await searchMedlinePlus(formattedSymptoms, 2);
+    if (medlineTopics.length > 0) {
+      const medlineContext = formatMedlinePlusContext(medlineTopics);
+      context = [context, medlineContext].filter(Boolean).join("\n\n");
+      hasGroundedContext = true;
+    }
+  } catch (medlineError) {
+    console.error(
+      "MedlinePlus retrieval failed, continuing without it:",
+      medlineError.message,
     );
   }
 
@@ -136,6 +191,17 @@ Your answer MUST be organized in this exact order of reasoning:
      specifically indicated IF THIS diagnosis turns out to be correct — written under that
      diagnosis, not as one protocol for the whole case (each diagnosis can call for a different
      treatment approach). If nothing specific applies, say so plainly instead of inventing one.
+   - "evidenceBasis": be honest about where this diagnosis's reasoning/protocol actually comes
+     from — "referenced" if it is substantively supported by the CLINICAL REFERENCES provided
+     above (Pinecone/PubMed/MedlinePlus), or "general_knowledge" if none of the provided
+     references cover it and you are relying on your own medical training. Do NOT mark something
+     "referenced" just because a reference exists somewhere above — only if it actually supports
+     THIS specific diagnosis/protocol.
+
+TRANSPARENCY RULE: it is completely fine, and expected, for most diagnoses to be
+"general_knowledge" — the references provided are a small supplementary set, not a complete
+guideline database. Never fabricate a connection to the references just to mark something
+"referenced".
 
 URGENCY LEVEL DEFINITIONS:
 - "low": mild medical symptoms (cold, mild headache, minor fatigue, skin rash)
@@ -186,7 +252,8 @@ Return JSON only, in this exact shape:
       "supportingReasoning": "... why this diagnosis fits, based on the findings ...",
       "againstReasoning": "... what argues against it / makes it uncertain, or an explicit statement that nothing does ...",
       "recommendedTests": "... test(s)/imaging that would confirm or rule this out, or an explicit statement that none is needed ...",
-      "protocol": "... the standard protocol / medication class / next clinical step IF this specific diagnosis is confirmed, or a clear statement that none applies ..."
+      "protocol": "... the standard protocol / medication class / next clinical step IF this specific diagnosis is confirmed, or a clear statement that none applies ...",
+      "evidenceBasis": "referenced | general_knowledge"
     }
   ],
   "suggestedSpecialist": "... the specialist the patient should be referred to, if any, otherwise an empty string ...",
@@ -216,6 +283,15 @@ Return JSON only, in this exact shape:
     const testsLabel =
       language === "ar" ? "الفحوصات الموصى بها" : "Recommended tests";
     const protocolLabel = language === "ar" ? "بروتوكول العلاج" : "Protocol";
+    const evidenceLabel = language === "ar" ? "الأساس المعرفي" : "Evidence basis";
+    const evidenceText = (basis) =>
+      basis === "referenced"
+        ? language === "ar"
+          ? "مستند لمرجع موثّق"
+          : "Backed by a cited reference"
+        : language === "ar"
+          ? "معرفة عامة للنموذج (غير مستند لمرجع مباشر)"
+          : "Model's general medical knowledge (no direct reference)";
 
     const diagnosesText = (parsed.possibleDiagnoses || []).length
       ? parsed.possibleDiagnoses
@@ -225,7 +301,8 @@ Return JSON only, in this exact shape:
               `   ${forLabel}: ${d.supportingReasoning}\n` +
               `   ${againstLabel}: ${d.againstReasoning}\n` +
               `   ${testsLabel}: ${d.recommendedTests}\n` +
-              `   ${protocolLabel}: ${d.protocol}`,
+              `   ${protocolLabel}: ${d.protocol}\n` +
+              `   ${evidenceLabel}: ${evidenceText(d.evidenceBasis)}`,
           )
           .join("\n\n")
       : language === "ar"
@@ -236,6 +313,34 @@ Return JSON only, in this exact shape:
       `${readingLabel}:\n${parsed.clinicalReading}`,
       `${diagnosesLabel}:\n${diagnosesText}`,
     ].join("\n\n");
+  };
+
+  // ─── طبقة تحقق برمجية إضافية (مش بس اعتماد على التزام الموديل بالـ prompt) ─
+  // حتى مع تعليمات واضحة في الـ prompt ("NEVER suggest ... that conflicts
+  // with a known allergy")، الموديل ممكن يغلط أو ينسى. الفحص ده بيدور
+  // بالكود نفسه (مش سؤال تاني للموديل) على نص كل protocol/recommendedTests
+  // عن أي ذكر حرفي لحساسية مسجّلة للمريض، ولو لقى تطابق بيحط تحذير آلي
+  // صريح فوق النص - شبكة أمان مستقلة عن سلوك الموديل، مش بديل عن مراجعة
+  // الدكتور (فحص بالكلمات المفتاحية بسيط ومش هيمسك كل الحالات، لكنه أفضل
+  // من الاعتماد على الـ prompt بس).
+  const flagAllergyConflicts = (diagnoses, allergyList) => {
+    if (!Array.isArray(diagnoses) || !allergyList.length) return diagnoses;
+
+    return diagnoses.map((d) => {
+      const textToScan = `${d.protocol || ""} ${d.recommendedTests || ""}`.toLowerCase();
+      const matchedAllergy = allergyList.find(
+        (a) => a && a.trim() && textToScan.includes(a.toLowerCase().trim()),
+      );
+
+      if (!matchedAllergy) return d;
+
+      const warning =
+        language === "ar"
+          ? `⚠️ تحذير آلي: النص التالي بيحتوي على ذكر لـ "${matchedAllergy}" وهو مسجّل كحساسية عند المريض — راجعي هذا البند قبل الاعتماد عليه.`
+          : `⚠️ Automated warning: the text below mentions "${matchedAllergy}", which is on this patient's recorded allergy list — review this item before relying on it.`;
+
+      return { ...d, protocol: `${warning}\n${d.protocol}` };
+    });
   };
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -256,6 +361,7 @@ Return JSON only, in this exact shape:
 
       const allowedUrgency = ["low", "medium", "critical", "unknown"];
       const allowedLikelihood = ["high", "moderate", "low"];
+      const allowedEvidenceBasis = ["referenced", "general_knowledge"];
       const diagnosesValid =
         Array.isArray(parsed.possibleDiagnoses) &&
         parsed.possibleDiagnoses.every(
@@ -278,6 +384,22 @@ Return JSON only, in this exact shape:
         throw new Error("Invalid AI response structure");
       }
 
+      // evidenceBasis حقل جديد - بنتسامح لو الموديل نساه بدل ما نرفض الرد
+      // كله، وبنطبّعه لقيمة افتراضية آمنة ("general_knowledge") بدل ما
+      // نسيبه undefined ويكسر أي كود تاني بيعتمد عليه لاحقًا
+      parsed.possibleDiagnoses = parsed.possibleDiagnoses.map((d) => ({
+        ...d,
+        evidenceBasis: allowedEvidenceBasis.includes(d.evidenceBasis)
+          ? d.evidenceBasis
+          : "general_knowledge",
+      }));
+
+      // تطبيق طبقة التحقق البرمجي من تعارض الحساسية قبل ما نرجّع النتيجة
+      parsed.possibleDiagnoses = flagAllergyConflicts(
+        parsed.possibleDiagnoses,
+        allergies,
+      );
+
       return {
         // الشكل القديم (لسه بيتخزن وبيتقرا من أماكن تانية في السيستم)
         structuredNote: composeStructuredNote(parsed),
@@ -290,6 +412,9 @@ Return JSON only, in this exact shape:
         // وكمان بيتحفظوا على الكونسلتيشن نفسها عشان الـ Patient History
         // يقدر يعرضهم منظمين برضو (مش بس النص المجمّع). كل تشخيص هنا معاه
         // بروتوكول العلاج الخاص بيه (protocol) - مش بروتوكول واحد عام للحالة
+        // كل عنصر هنا فيه evidenceBasis ("referenced" / "general_knowledge")
+        // بالإضافة لأي تحذير آلي اتضاف تلقائيًا في "protocol" لو فيه تعارض
+        // حساسية - عشان الفرونت يقدر يعرضهم بشكل مميز (badge/لون مختلف)
         clinicalReading: parsed.clinicalReading,
         possibleDiagnoses: parsed.possibleDiagnoses,
       };

@@ -27,14 +27,24 @@ const searchSimilar = async (query, topK = 3) => {
   }
 };
 
-const retrieve = async (query, language = 'en', topK = 3) => {
+// حد أدنى لدرجة التطابق (cosine similarity) عشان نعتبر النتيجة "مرجع
+// موثوق فعليًا" - قبل كده كان بيترجع أي topK نتيجة حتى لو score واطي جدًا
+// (مش relevant فعليًا للسؤال)، وده كان بيخلي حاجات زي medicalAgent تعتبر
+// "لقينا في Pinecone ✅" وتوقف عن الدور على مصادر تانية (PubMed/MedlinePlus)
+// رغم إن النتيجة أصلًا مش مرتبطة. القيمة الافتراضية محافظة عشان نفضّل
+// context أقل بس فعلاً دقيق، بدل context أكتر وغير موثوق
+const DEFAULT_MIN_SCORE = 0.75;
+
+const retrieve = async (query, language = 'en', topK = 3, minScore = DEFAULT_MIN_SCORE) => {
   try {
     const matches = await searchSimilar(query, topK);
-    return matches.map(match => ({
-      topic: match.metadata?.topic,
-      content: match.metadata?.content,
-      score: match.score,
-    }));
+    return matches
+      .filter(match => typeof match.score !== 'number' || match.score >= minScore)
+      .map(match => ({
+        topic: match.metadata?.topic,
+        content: match.metadata?.content,
+        score: match.score,
+      }));
   } catch (error) {
     console.error('Retrieve error:', error.message);
     return [];
