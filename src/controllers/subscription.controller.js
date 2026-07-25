@@ -76,7 +76,19 @@ const renewSubscription = async (req, res) => {
     }
 
     const startDate = new Date();
-    const endDate = calculateNewSubscriptionEnd(user.subscription, months);
+
+    // لو الدكتور بيبدّل لخطة مختلفة عن اللي هو فيها دلوقتي (وهو active)،
+    // مابنضفش الوقت الباقي من الخطة القديمة - نفس المنطق المستخدم في
+    // handlePaymobWebhook عشان يبقى السلوك متسق سواء الدكتور دفع بنفسه
+    // أو الأدمن غيّر الخطة يدويًا من الداشبورد
+    const isPlanSwitch =
+      user.subscription.status === "active" &&
+      plan &&
+      user.subscription.plan !== plan;
+
+    const endDate = calculateNewSubscriptionEnd(user.subscription, months, {
+      addRemainingTime: !isPlanSwitch,
+    });
 
     user.subscription.status = "active";
     user.subscription.plan = plan || user.subscription.plan;
