@@ -33,6 +33,18 @@ const runDifferentialDiagnosisAgent = async ({
   previousPrescription = "",
   patientAge = null,
   patientGender = null,
+  // السياق الطبي المزمن للمريض - مهم جدًا في أي تشخيص تفريقي حقيقي (مثلاً
+  // مريض سكري بيشتكي من عطش وتعب، أو مريض بيتعالج بأدوية بتأثر على الصورة
+  // السريرية)
+  allergies = [],
+  chronicConditions = [],
+  chronicMedications = [],
+  // ملفات التحاليل المعملية/تقارير الأشعة اللي الدكتور رفعها (اختياري).
+  // كل عنصر: { mimeType, data (base64), originalName }. بس Gemini (مش
+  // Groq fallback) قادر يشوفهم فعليًا كصور/PDF — بنبعتهم كـ fileParts
+  // لـ chatCompletion، وبنذكرهم في الـ prompt النصي كمان عشان أي fallback
+  // نصي يعرف إنهم موجودين حتى لو مش قادر يفتحهم.
+  labFiles = [],
 }) => {
   const formattedSymptoms =
     Array.isArray(symptoms) && symptoms.length
@@ -92,6 +104,17 @@ STRICT RULES:
   presentations, pregnancy-related considerations for female patients of reproductive age,
   age-typical causes of a given symptom). If age or gender is unknown, reason as generally as
   the evidence allows and don't assume unstated demographic risk factors.
+- ALWAYS factor the patient's chronic conditions, current chronic medications, and known
+  allergies (given below) into your reasoning:
+  * A chronic condition can directly explain or worsen the current presentation (e.g. a
+    diabetic patient with polyuria/fatigue, a hypertensive patient with a headache) — raise
+    the likelihood of related diagnoses accordingly and say so explicitly in
+    "supportingReasoning".
+  * A chronic medication can be the CAUSE of the current symptoms (a side effect or drug
+    interaction) rather than a new disease — consider this as a candidate diagnosis in its own
+    right when plausible (e.g. a cough in a patient on an ACE inhibitor).
+  * NEVER suggest a "recommendedTests" or "protocol" that conflicts with a known allergy.
+  * If chronic conditions/medications/allergies are "None reported", do not assume any exist.
 
 Your answer MUST be organized in this exact order of reasoning:
 1. First, read and interpret the clinical picture (the "reading"): what the symptoms/notes
@@ -122,7 +145,26 @@ URGENCY LEVEL DEFINITIONS:
 
 IMPORTANT: If rawInput and symptoms contain NO medical terms at all, you MUST return "unknown"
 for urgencyLevel and an empty possibleDiagnoses array.
+${
+  labFiles.length > 0
+    ? `
+ATTACHED LAB RESULTS / IMAGING FILES:
+The doctor has attached ${labFiles.length} lab result(s) and/or radiology report(s) (images or
+PDFs) for this patient, provided below as part of this message. You MUST actively examine them
+and factor their findings into "clinicalReading" and into each diagnosis's "supportingReasoning"
+/ "againstReasoning" (e.g. an elevated WBC count, an abnormal chest X-ray finding, a positive
+culture result). If a file is unreadable/irrelevant, ignore it silently rather than commenting
+on file quality.`
+    : ""
+}
     `;
+
+  const labFilesNote =
+    labFiles.length > 0
+      ? `\nAttached files (${labFiles.length}): ${labFiles
+          .map((f) => f.originalName || "file")
+          .join(", ")}`
+      : "";
 
   const userMessage = `
 Doctor Input: ${rawInput}
@@ -130,6 +172,9 @@ Symptoms: ${formattedSymptoms}
 Diagnosis: ${diagnosis || "Not yet determined"}
 Patient age: ${patientAge !== null ? `${patientAge} years old` : "Unknown"}
 Patient gender: ${patientGender || "Unknown"}
+Chronic conditions: ${chronicConditions.length ? chronicConditions.join(", ") : "None reported"}
+Current chronic medications: ${chronicMedications.length ? chronicMedications.join(", ") : "None reported"}
+Known allergies: ${allergies.length ? allergies.join(", ") : "None reported"}${labFilesNote}
 
 Return JSON only, in this exact shape:
 {
@@ -167,12 +212,10 @@ Return JSON only, in this exact shape:
     const likelihoodLabel = language === "ar" ? "الاحتمالية" : "Likelihood";
     const forLabel =
       language === "ar" ? "الأسباب المؤيدة" : "Supporting reasoning";
-    const againstLabel =
-      language === "ar" ? "الأسباب غير المؤيدة" : "Against";
+    const againstLabel = language === "ar" ? "الأسباب غير المؤيدة" : "Against";
     const testsLabel =
       language === "ar" ? "الفحوصات الموصى بها" : "Recommended tests";
-    const protocolLabel =
-      language === "ar" ? "بروتوكول العلاج" : "Protocol";
+    const protocolLabel = language === "ar" ? "بروتوكول العلاج" : "Protocol";
 
     const diagnosesText = (parsed.possibleDiagnoses || []).length
       ? parsed.possibleDiagnoses
@@ -197,7 +240,14 @@ Return JSON only, in this exact shape:
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const result = await chatCompletion({ systemPrompt, userMessage });
+      const result = await chatCompletion({
+        systemPrompt,
+        userMessage,
+        fileParts: labFiles.map((f) => ({
+          mimeType: f.mimeType,
+          data: f.data,
+        })),
+      });
       const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس

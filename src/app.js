@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const path = require("path");
 
 const connectDB = require("./config/db"); // ⬅️  السطر ده
 
@@ -35,6 +36,19 @@ app.use(cors());
 app.use(express.json());
 app.use(limiter);
 
+// بيسمح بعرض/تحميل ملفات التحاليل والأشعة المرفوعة من الفرونت (اللي غالبًا
+// على دومين مختلف) - helmet افتراضيًا بيحط Cross-Origin-Resource-Policy:
+// same-origin وده بيمنع تحميل الصور/الـ PDFs من دومين تاني، فبنستثني
+// المسار ده بس
+app.use(
+  "/uploads",
+  (req, res, next) => {
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  },
+  express.static(path.join(__dirname, "../uploads")),
+);
+
 app.use("/api/auth", authRoutes);
 
 app.use("/api/patient", patientRouter);
@@ -55,10 +69,8 @@ app.get("/", (req, res) => {
   res.json({ message: "Med Agents API is running!" });
 });
 
-
 app.use("/api/reports", reportGenRoutes);
 app.use("/api/dashboard", dashboardRoutes);
-
 
 app.use(errorHandler);
 

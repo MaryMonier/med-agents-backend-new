@@ -46,6 +46,20 @@ const consultationSchema = new mongoose.Schema(
     ],
     // لو الدكتور حدد إن الدايجنوزز دي مرض مزمن، بنضيفها لـ Patient.chronicConditions
     isChronic: { type: Boolean, default: false },
+    // ملفات التحاليل المعملية/تقارير الأشعة اللي الدكتور رفعها مع الزيارة
+    // دي (اختياري تمامًا). بيتخزن هنا الميتاداتا بس (مسار الملف على
+    // السيرفر)، مش الملف نفسه. إيجنت التشخيص التفريقي بيقرا الملفات دي
+    // وقت "Get AI Recommendation" (لو Gemini شغال، بيشوفها فعليًا كصور/PDF).
+    labFiles: [
+      {
+        _id: false,
+        url: { type: String, required: true },
+        originalName: { type: String },
+        mimeType: { type: String },
+        size: { type: Number },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
     status: {
       type: String,
       enum: ["pending", "completed"],

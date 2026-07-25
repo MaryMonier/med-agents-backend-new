@@ -410,7 +410,7 @@ const getPatientHistory = async (req, res) => {
 
     const consultations = await Consultation.find({ patientId })
       .select(
-        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote clinicalReading possibleDiagnoses followupId rawInput createdAt",
+        "diagnosis symptoms urgencyLevel suggestedSpecialist structuredNote clinicalReading possibleDiagnoses followupId rawInput labFiles createdAt",
       )
       .sort({ createdAt: -1 });
 
@@ -428,6 +428,9 @@ const getPatientHistory = async (req, res) => {
           // نفسه الترتيب اللي بيتعرض بيه في الـ Patient History في الفرونت
           symptoms: consultation.symptoms,
           doctorNotes: consultation.rawInput || null,
+          // ملفات التحاليل المعملية/تقارير الأشعة اللي الدكتور رفعها مع
+          // الزيارة دي (اختياري) - بتتعرض في الفرونت تحت ملاحظات الدكتور
+          labFiles: consultation.labFiles || [],
           // رؤية إيجنت التشخيص التفريقي (Differential Diagnosis Agent):
           // القطع المنظمة أول لو موجودة (كونسلتيشنز جديدة)، وstructuredNote
           // كـ fallback للكونسلتيشنز القديمة اللي اتسجلت قبل إضافة الحقول دي

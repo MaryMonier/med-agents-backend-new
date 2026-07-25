@@ -2,6 +2,9 @@ const Consultation = require("../models/Consultation");
 const Patient = require("../models/Patient");
 const Followup = require("../models/Followup");
 const Prescription = require("../models/Prescription");
+const fs = require("fs");
+const path = require("path");
+const { UPLOAD_DIR } = require("../middleware/labFilesUpload.middleware");
 
 const {
   runDifferentialDiagnosisAgent,
@@ -12,6 +15,43 @@ const {
 const {
   getAllActiveMedicationsForPatient,
 } = require("./prescriptionController");
+
+// أقصى عدد ملفات بنبعتها فعليًا للإيجنت في الطلب الواحد (حتى لو الكونسلتيشن
+// فيها أكتر) - عشان الـ payload المبعوت لـ Gemini يفضل في حجم معقول
+const MAX_LAB_FILES_PER_REQUEST = 4;
+
+/**
+ * بتاخد ليستة labFiles (زي ما بترجع من endpoint الرفع: [{url, mimeType,
+ * originalName}]) وبتقرا كل ملف فعليًا من الديسك وترجعه base64 عشان
+ * يتبعت لإيجنت التشخيص التفريقي (Gemini بس هو اللي بيشوفهم فعليًا). أي
+ * ملف مش موجود على الديسك أو حصل معاه خطأ في القراية بيتجاهل بصمت بدل ما
+ * يوقف الطلب كله.
+ */
+const readLabFilesAsBase64 = (labFiles = []) => {
+  if (!Array.isArray(labFiles) || labFiles.length === 0) return [];
+
+  return labFiles
+    .slice(0, MAX_LAB_FILES_PER_REQUEST)
+    .map((file) => {
+      try {
+        const filename = path.basename(file.url || "");
+        const fullPath = path.join(UPLOAD_DIR, filename);
+        const buffer = fs.readFileSync(fullPath);
+        return {
+          mimeType: file.mimeType,
+          data: buffer.toString("base64"),
+          originalName: file.originalName,
+        };
+      } catch (err) {
+        console.error(
+          `[readLabFilesAsBase64] Failed to read file ${file?.url}:`,
+          err.message,
+        );
+        return null;
+      }
+    })
+    .filter(Boolean);
+};
 
 const getStartOfTodayInEgypt = () => {
   const now = new Date();
@@ -125,6 +165,8 @@ const createConsultation = async (req, res) => {
       // مش بس نص واحد مجمّع
       clinicalReading,
       possibleDiagnoses,
+      // ميتاداتا ملفات التحاليل/الأشعة اللي اترفعت قبل الحفظ (اختياري)
+      labFiles,
     } = req.body;
 
     const patient = await Patient.findById(patientId);
@@ -186,6 +228,7 @@ const createConsultation = async (req, res) => {
       possibleDiagnoses: Array.isArray(possibleDiagnoses)
         ? possibleDiagnoses
         : [],
+      labFiles: Array.isArray(labFiles) ? labFiles : [],
       isChronic: !!isChronic,
       language: language || "en",
       status: "completed",
@@ -603,15 +646,25 @@ const getAIRecommendation = async (req, res) => {
       previousInstructions,
       previousPrescription,
       patientId,
+      // ميتاداتا ملفات التحاليل/الأشعة المرفوعة قبل الطلب ده: [{url,
+      // mimeType, originalName}] - بنقراهم فعليًا من الديسك تحت
+      labFiles,
     } = req.body;
 
     let patientAge = null;
     let patientGender = null;
+    let allergies = [];
+    let chronicConditions = [];
+    let chronicMedications = [];
     if (patientId) {
-      const patient =
-        await Patient.findById(patientId).select("dateOfBirth gender");
+      const patient = await Patient.findById(patientId).select(
+        "dateOfBirth gender allergies chronicConditions chronicMedications",
+      );
       if (patient) {
         patientGender = patient.gender || null;
+        allergies = patient.allergies || [];
+        chronicConditions = patient.chronicConditions || [];
+        chronicMedications = patient.chronicMedications || [];
         if (patient.dateOfBirth) {
           const today = new Date();
           const birth = new Date(patient.dateOfBirth);
@@ -638,6 +691,13 @@ const getAIRecommendation = async (req, res) => {
       previousPrescription: previousPrescription || "",
       patientAge,
       patientGender,
+      allergies,
+      chronicConditions,
+      chronicMedications,
+      // بنقرا الملفات فعليًا من الديسك ونحولها base64 هنا (مش في الإيجنت)
+      // عشان الإيجنت يفضل مسؤول بس عن الـ prompt/الـ AI call، والكونترولر
+      // هو المسؤول عن أي حاجة فيها I/O (ملفات، داتابيز)
+      labFiles: readLabFilesAsBase64(labFiles),
     });
 
     res.status(200).json({
