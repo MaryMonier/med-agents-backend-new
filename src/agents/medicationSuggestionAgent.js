@@ -1,6 +1,13 @@
 const { GoogleGenAI } = require("@google/genai");
 const Groq = require("groq-sdk");
 const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
+const { searchDrug } = require("../services/openFDA.service");
+const { retrieve, formatContext } = require("../services/pinecone.service");
+const { searchPubMed, formatPubMedContext } = require("../services/pubmed.service");
+const {
+  searchMedlinePlus,
+  formatMedlinePlusContext,
+} = require("../services/medlineplus.service");
 
 const gemini = GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
@@ -61,12 +68,41 @@ const extractJson = (text) => {
   return match ? match[0] : text;
 };
 
+// فحص برمجي فعلي (مش مجرد تعليمة في الـ prompt) - بيدور في نص FDA
+// (warnings/contraindications) وفي اسم الدوا نفسه عن أي كلمة من حساسيات
+// المريض المسجّلة. ده شبكة أمان تانية بعد تعليمة "avoid known allergy
+// conflicts" في الـ prompt، مش بديل عنها - الموديل ممكن ينسى، الكود لأ
+const checkAllergyConflict = (med, allergies) => {
+  if (!allergies || allergies.length === 0) return null;
+
+  const haystack = `${med.name || ""} ${med.activeIngredient || ""}`.toLowerCase();
+  const hit = allergies.find(
+    (a) => a && haystack.includes(String(a).toLowerCase().trim()),
+  );
+
+  return hit || null;
+};
+
 // ─── Medication Suggestion Agent ────────────────────────────────────────────
 // إيجنت منفصل عن إيجنت التشخيص تمامًا: بياخد التشخيص (اللي الدكتور راجعه/
 // عدّله بعد ما إيجنت التشخيص اقترحه) + الأعراض + ملاحظات الدكتور، ويقترح
-// خطة أدوية مبدئية (اسم، جرعة، تكرار، مدة) مع سبب قصير لكل دواء. النتيجة دي
-// اقتراح أولي بس - لسه بتعدي على فحص quickDrugCheckAgent العادي وقت ما
-// الدكتور فعليًا يضيفها للروشتة، فمفيش خطورة إنها تتفحصش قبل الحفظ.
+// خطة أدوية مبدئية (اسم، جرعة، تكرار، مدة) مع سبب قصير لكل دواء.
+//
+// اتحول من نداء واحد للموديل لنداءين + مصدرين خارجيين حقيقيين، عشان
+// الاقتراح مايبقاش معتمد بالكامل على معرفة الموديل العامة زي ما كان:
+//
+//   1) نجيب سياق إرشادي عن التشخيص (Pinecone → PubMed → MedlinePlus، زي
+//      نفس ترتيب Differential Diagnosis Agent) - عشان اختيار الدوا نفسه
+//      (مش بس جرعته) يبقى مبني على مرجع، مش بس على تدريب الموديل.
+//   2) الموديل بيقترح خطة أولية مبنية على السياق ده.
+//   3) بنجيب بيانات FDA رسمية (openFDA) لكل دوا اقترحه الموديل بالاسم.
+//   4) نداء تاني للموديل: يراجع اقتراحه الأول في ضوء بيانات FDA الحقيقية
+//      (جرعة/تحذيرات/موانع استخدام) ويطلع خطة نهائية، مع evidenceBasis لكل
+//      دوا يوضح مصدر الثقة فيه.
+//
+// النتيجة دي لسه اقتراح أولي بس - لسه بتعدي على فحص quickDrugCheckAgent
+// العادي وقت ما الدكتور فعليًا يضيفها للروشتة، فمفيش خطورة إنها تتفحصش
+// قبل الحفظ.
 //
 // activeMedications: نفس شكل الأدوية الشغالة حاليًا عند المريض (لو موجودة)،
 // عشان الاقتراح يراعي إنه مايكررش دواء موجود أصلاً أو يقترح حاجة متعارضة
@@ -84,6 +120,7 @@ const runMedicationSuggestionAgent = async ({
   allergies = [],
   activeMedications = [],
   patientAge = null,
+  patientWeightKg = null,
   language = "en",
   isFollowup = false,
   previousPrescription = [],
@@ -111,6 +148,10 @@ const runMedicationSuggestionAgent = async ({
             .join(", ")
         : "None on record";
     const ageInfo = patientAge !== null ? `${patientAge} years old` : "Unknown";
+    const weightInfo =
+      patientWeightKg !== null && patientWeightKg !== undefined
+        ? `${patientWeightKg} kg`
+        : "Not recorded";
     const previousMedsList =
       Array.isArray(previousPrescription) && previousPrescription.length > 0
         ? previousPrescription
@@ -128,6 +169,34 @@ const runMedicationSuggestionAgent = async ({
             })
             .join(", ")
         : "None recorded";
+
+    // ─── الخطوة 1: سياق إرشادي عن التشخيص (Pinecone → PubMed → MedlinePlus) ──
+    // نفس ترتيب Differential Diagnosis Agent بالظبط - هدفنا إن اختيار
+    // "أنهي دوا" مش بس "أنهي جرعة" يبقى مبني على مرجع
+    let guidelineContext = "";
+    let guidelineSourceUsed = null; // 'pinecone' | 'pubmed' | 'medlineplus' | null
+
+    const pineconeDocs = await retrieve(`${diagnosis} treatment guideline first line`, language, 3);
+    if (pineconeDocs.length > 0) {
+      guidelineContext = formatContext(pineconeDocs, language);
+      guidelineSourceUsed = "pinecone";
+    } else {
+      const pubmedDocs = await searchPubMed(`${diagnosis} treatment guideline`, 3);
+      if (pubmedDocs.length > 0) {
+        guidelineContext = formatPubMedContext(pubmedDocs);
+        guidelineSourceUsed = "pubmed";
+      } else {
+        const medlineDocs = await searchMedlinePlus(diagnosis, 3);
+        if (medlineDocs.length > 0) {
+          guidelineContext = formatMedlinePlusContext(medlineDocs);
+          guidelineSourceUsed = "medlineplus";
+        }
+      }
+    }
+
+    const guidelineBlock = guidelineContext
+      ? `\n\nTREATMENT GUIDELINE REFERENCES for this diagnosis (use these to select the drug/first-line choice; cite implicitly by following them, do not quote verbatim):\n${guidelineContext}\n`
+      : "\n\nNo external guideline reference was found for this diagnosis — base the plan on standard WHO treatment knowledge and say so.\n";
 
     const followupBlock =
       isFollowup && previousPrescription.length > 0
@@ -163,7 +232,7 @@ when multiple options are truly equivalent.
 `
         : "";
 
-    const systemPrompt = `You are a medication-planning assistant for a licensed doctor. Suggest an INITIAL prescription plan based on an already-confirmed diagnosis. Do not re-diagnose.
+    const baseSystemPrompt = `You are a medication-planning assistant for a licensed doctor. Suggest an INITIAL prescription plan based on an already-confirmed diagnosis. Do not re-diagnose.
 
 Rules:
 - Text fields in ${lang} (drug names stay in standard English/generic form)
@@ -180,14 +249,16 @@ Rules:
   subtype stated in the diagnosis.
 - Base your choices on WHO treatment guidelines / WHO Model List of Essential Medicines for this
   diagnosis where one exists — prefer WHO first-line recommended agents over alternatives, unless
-  the patient's allergies/active medications/age rule them out
+  the patient's allergies/active medications/age rule them out. Use the TREATMENT GUIDELINE
+  REFERENCES provided below when available; they take priority over your own general knowledge.
 - Suggest as many medications as are CLINICALLY APPROPRIATE for this diagnosis (up to 4 total, including any symptomatic/protective add-ons below) — do not default to just one out of caution. If standard practice for this diagnosis is combination therapy, or if this is a follow-up showing inadequate response to a single agent, suggest the full appropriate regimen, not just one drug.
 - SYMPTOMATIC RELIEF: if the symptoms or doctor's notes mention pain/ache/soreness of any kind, include a short-course analgesic appropriate for the diagnosis and pain severity (e.g. paracetamol for mild pain; escalate per WHO pain ladder only if the description indicates moderate/severe pain) — don't leave pain unaddressed just because it's not the primary diagnosis.
 - GASTRIC PROTECTION: if the plan (including the patient's existing active medications) includes any drug well-known to irritate the stomach or GI tract (e.g. NSAIDs, aspirin, oral corticosteroids), add a gastroprotective agent (e.g. a PPI) to the plan, unless one is already active or clearly not needed for a very short course.
+- PEDIATRIC DOSING: if the patient is under 18, doses MUST be weight-based (mg/kg), not adult fixed doses. Use the patient's weight if given below; if weight is "Not recorded", reason from a typical weight-for-age for a child that age and clearly lean conservative (lower end of the safe range) rather than defaulting to an adult dose. Never exceed the standard adult maximum dose even if a mg/kg calculation would suggest more. Double-check units (mg vs mL vs mcg) since unit mix-ups are the most common pediatric dosing error. Note in "reason" if the dose was estimated from age due to missing weight.
 - Consider allergies and active medications; don't repeat an active med (unless a dose change is clearly needed); avoid known allergy conflicts
 - "reason" is max 8 words, tied to diagnosis/symptoms
 - This is a draft for doctor review, not final
-${followupBlock}${varietyBlock}
+${followupBlock}${varietyBlock}${guidelineBlock}
 JSON shape (minified, no pretty-printing):
 {"medications":[{"name":str,"activeIngredient":str|null,"dosageAmount":num,"dosageUnit":"mg"|"mcg"|"g","frequencyCount":num,"frequencyPeriod":"per day"|"per week"|"per month","durationValue":num|null,"durationUnit":"days"|"weeks"|"months"|null,"isChronic":bool,"reason":str}]}
 If isChronic is true, durationValue/durationUnit must be null.`;
@@ -196,19 +267,20 @@ If isChronic is true, durationValue/durationUnit must be null.`;
 Symptoms: ${formattedSymptoms}
 Notes: ${rawInput || "none"}
 Age: ${ageInfo}
+Weight: ${weightInfo}
 Allergies: ${allergiesList}
 Active meds: ${activeMedsList}
 
 IMPORTANT: Reply with ONLY the raw JSON object. No markdown, no explanation, no text before or after.`;
 
-    const callAndParse = async (maxTokens) => {
+    const callAndParse = async (systemPrompt, userMsg, maxTokens) => {
       const response = await callLLM({
         temperature: 0.3,
         max_tokens: maxTokens,
         jsonMode: true,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+          { role: "user", content: userMsg },
         ],
       });
 
@@ -221,18 +293,16 @@ IMPORTANT: Reply with ONLY the raw JSON object. No markdown, no explanation, no 
       return JSON.parse(extractJson(cleaned));
     };
 
-    let parsed;
+    // ─── الخطوة 2: الاقتراح الأولي ───────────────────────────────────────────
+    let draft;
     try {
-      // المحاولة الأساسية: ميزانية توكينز صغيرة كفاية لـ 3 أدوية مضغوطة
-      parsed = await callAndParse(2500);
+      draft = await callAndParse(baseSystemPrompt, userPrompt, 2500);
     } catch (firstErr) {
-      // نادر جدًا بعد التصغير، بس لو حصل قطع برضو، نجرب مرة واحدة بس
-      // بمساحة أكبر شوية بدل ما نفشل على طول
       console.log(
         "Medication Suggestion Agent: first attempt failed to parse, retrying with more room...",
       );
       try {
-        parsed = await callAndParse(2000);
+        draft = await callAndParse(baseSystemPrompt, userPrompt, 2000);
       } catch (secondErr) {
         console.error(
           "Medication Suggestion Agent: failed to parse JSON after retry:",
@@ -246,11 +316,131 @@ IMPORTANT: Reply with ONLY the raw JSON object. No markdown, no explanation, no 
       }
     }
 
-    const medications = Array.isArray(parsed.medications)
-      ? parsed.medications
-      : [];
+    const draftMeds = Array.isArray(draft.medications) ? draft.medications : [];
 
-    return { success: true, data: medications };
+    if (draftMeds.length === 0) {
+      return { success: true, data: [] };
+    }
+
+    // ─── الخطوة 3+4: مراجعة FDA - بس لما يكون فيه سبب حقيقي يستاهل التكلفة ──
+    // نداء المراجعة التاني (FDA lookup + LLM call تاني) بيزوّد وقت الاستجابة
+    // وتكلفة الـ API. مش كل اقتراح دوا بسيط (زي مريض جديد من غير حساسيات)
+    // محتاج مستوى التحقق ده. بنشغّله بس لو:
+    //   - فيه حساسيات مسجّلة للمريض (أهم سبب أمان - لازم نتأكد من التعارض)
+    //   - أو الحالة follow-up (تغيير جرعة/دواء موجود يستاهل تحقق إضافي)
+    // في الحالة العادية (مريض جديد، مفيش حساسيات)، بنكتفي بالاقتراح الأولي
+    // (اللي أصلًا اتغذى بمرجع علاجي من الخطوة 1) من غير مراجعة تانية
+    const needsFdaVerification = allergies.length > 0 || isFollowup;
+
+    let fdaResults = [];
+    let fdaContext = "";
+
+    if (needsFdaVerification) {
+      try {
+        fdaResults = await Promise.all(
+          draftMeds.map((m) => searchDrug(m.activeIngredient || m.name)),
+        );
+      } catch (fdaErr) {
+        console.error("Medication Suggestion Agent: FDA lookup failed:", fdaErr.message);
+        // مفيش FDA data متاحة - هنكمل بالخطة الأولية زي ما هي، مع evidenceBasis
+        // مناسب (general_knowledge)، بدل ما نوقف كل حاجة عشان الـ API الخارجي وقع
+      }
+
+      fdaContext = fdaResults.length
+        ? draftMeds
+            .map((m, i) => {
+              const fda = fdaResults[i];
+              if (!fda) return null;
+              return `
+Drug: ${m.name}
+- Dosage (FDA label): ${fda.dosage}
+- Warnings: ${fda.warnings}
+- Contraindications: ${fda.contraindications}
+- Interactions: ${fda.interactions}
+    `;
+            })
+            .filter(Boolean)
+            .join("\n---\n")
+        : "";
+    }
+
+    let finalMeds = draftMeds;
+    let usedRefinementPass = false;
+
+    if (fdaContext) {
+      const refineSystemPrompt = `You are reviewing your own DRAFT medication plan against REAL FDA label data for the same drugs. Adjust the plan if the FDA data reveals a discrepancy (e.g. your dosage differs meaningfully from the FDA-labeled dosing range, a warning/contraindication conflicts with the patient's allergies or active medications, or a stated interaction is relevant). If the draft already matches, keep it as-is.
+
+Rules:
+- Text fields in ${lang} (drug names stay in standard English/generic form)
+- Output ONLY raw minified JSON — no markdown, no explanation
+- Do NOT remove a medication just because FDA data is generic/unhelpful for it — keep it, and mark evidenceBasis accordingly
+- For EACH medication, set "evidenceBasis" to exactly one of:
+  * "fda_verified" — the dosage/safety notes were checked against real FDA label data above and are consistent (or were adjusted to match it)
+  * "guideline_referenced" — the FDA data for this drug was unhelpful/missing, but the CHOICE of this drug was grounded in the treatment guideline reference provided earlier, not just general training knowledge
+  * "general_knowledge" — neither FDA data nor a guideline reference was available/useful for this drug; it's based on your general medical knowledge
+- Patient allergies: ${allergiesList}. If any FDA warning/contraindication text conflicts with a listed allergy, set a short "safetyNote" field on that medication describing the conflict in ${lang} — otherwise omit "safetyNote" or set it to null
+- Keep every other field exactly as in the input shape
+
+JSON shape (minified):
+{"medications":[{"name":str,"activeIngredient":str|null,"dosageAmount":num,"dosageUnit":"mg"|"mcg"|"g","frequencyCount":num,"frequencyPeriod":"per day"|"per week"|"per month","durationValue":num|null,"durationUnit":"days"|"weeks"|"months"|null,"isChronic":bool,"reason":str,"evidenceBasis":"fda_verified"|"guideline_referenced"|"general_knowledge","safetyNote":str|null}]}`;
+
+      const refineUserPrompt = `DRAFT plan:
+${JSON.stringify({ medications: draftMeds })}
+
+FDA label data for these drugs:
+${fdaContext}
+
+Guideline reference used for the original diagnosis choice: ${guidelineSourceUsed || "none"}
+
+Reply with ONLY the raw JSON object.`;
+
+      try {
+        const refined = await callAndParse(refineSystemPrompt, refineUserPrompt, 2800);
+        if (Array.isArray(refined.medications) && refined.medications.length > 0) {
+          finalMeds = refined.medications;
+          usedRefinementPass = true;
+        }
+      } catch (refineErr) {
+        console.log(
+          "Medication Suggestion Agent: refinement pass failed, falling back to draft plan:",
+          refineErr.message,
+        );
+        // لو المراجعة فشلت، مانضيعش الاقتراح الأولي - نرجعه زي ما هو بس
+        // من غير evidenceBasis مفصّل (هيتحط له default تحت)
+      }
+    }
+
+    // لو مفيش refinement pass حصل (مفيش FDA context، أو فشل الـ pass)، نضمن
+    // إن كل دوا لسه معاه evidenceBasis منطقي بدل ما يفضل فاضي
+    finalMeds = finalMeds.map((m) => ({
+      ...m,
+      evidenceBasis:
+        m.evidenceBasis ||
+        (usedRefinementPass
+          ? "general_knowledge"
+          : guidelineSourceUsed
+            ? "guideline_referenced"
+            : "general_knowledge"),
+    }));
+
+    // ─── فحص برمجي إضافي (مش من الموديل) لتعارض الحساسية ────────────────────
+    // شبكة أمان تانية، بتشتغل حتى لو الموديل نسي يحط safetyNote بنفسه
+    finalMeds = finalMeds.map((m) => {
+      if (m.safetyNote) return m; // الموديل لقى تعارض بالفعل، سيباه
+      const conflict = checkAllergyConflict(m, allergies);
+      if (conflict) {
+        return {
+          ...m,
+          safetyNote:
+            language === "ar"
+              ? `⚠️ تحذير آلي: اسم الدواء يتقاطع مع حساسية مسجّلة ("${conflict}") — راجعي قبل الاعتماد`
+              : `⚠️ Automated check: drug name overlaps with a recorded allergy ("${conflict}") — review before approving`,
+        };
+      }
+      return m;
+    });
+
+    return { success: true, data: finalMeds };
   } catch (error) {
     console.error("Medication Suggestion Agent Error:", error);
     return { success: false, message: error.message, data: [] };

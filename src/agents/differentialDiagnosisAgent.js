@@ -51,6 +51,45 @@ const runDifferentialDiagnosisAgent = async ({
       ? symptoms.join(", ")
       : "Not specified";
 
+  // بدل ما نستخدم الأعراض بس في البحث عن مراجع خارجية، بنجمعها مع كلام
+  // الدكتور الحر (rawInput) - فحوصات سريرية مهمة (زي "palpable gallbladder")
+  // غالبًا بتتكتب هنا مش في خانة الأعراض، ولو ماستخدمناهاش في البحث، النظام
+  // بيدور بجزء من الصورة السريرية بس ويفوّت مراجع مهمة كانت ممكن تتلاقى.
+  //
+  // مفيش تقصير للنص هنا خالص - بيتحط تقصير مختلف لكل مصدر تحت حسب طبيعته
+  // (Pinecone بيفهم معنى نص طويل عادي عن طريق الـ embedding، لكن PubMed/
+  // MedlinePlus محركات بحث بكلمات مفتاحية فبيحتاجوا سقف أعلى أوسع، مش قص
+  // ملاحظة الدكتور الطبيعية)
+  const retrievalQuery = [formattedSymptoms, rawInput].filter(Boolean).join(" ");
+
+  // سقف أمان بس لحالات نادرة جدًا (نص ضخم اتلصق بالغلط) - مش تقصير لملاحظة
+  // دكتور عادية حتى لو طويلة، 2000 حرف كفاية لفقرة كاملة بسهولة
+  const boundedQuery = retrievalQuery.slice(0, 2000);
+
+  // PubMed/MedlinePlus مش بيفهموا جملة طبيعية كاملة زي محرك بحث عادي -
+  // eutils بيتعامل مع الكلمات المفصولة بمسافة بمنطق قريب من AND ضمني، يعني
+  // جملة طويلة فيها كلام حشو ("on examination there is") بتقلل احتمال
+  // اللقاء نتيجة لصفر تقريبًا حتى لو الموضوع نفسه موجود في PubMed فعلاً.
+  // بنشيل كلمات الحشو الشائعة، وبنربط الكلمات المتبقية بـ OR بدل الافتراضي
+  // (AND ضمني) - عشان أي كلمة قوية لوحدها (زي "gallbladder") تقدر تجيب
+  // نتيجة، بدل ما نحتاج كل الكلمات تتطابق مع بعض في نفس المقال
+  const STOPWORDS = new Set([
+    "a", "an", "the", "on", "in", "at", "of", "for", "to", "with", "and",
+    "or", "is", "are", "was", "were", "there", "this", "that", "these",
+    "those", "it", "as", "by", "be", "been", "has", "have", "had", "not",
+    "no", "patient", "examination", "presents", "presenting", "complains",
+    "complaining", "reports", "reported", "noted", "noticed", "since",
+    "from", "into", "also", "any", "who",
+  ]);
+
+  const filteredTerms = boundedQuery
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
+
+  const keywordSearchQuery =
+    filteredTerms.length > 0 ? filteredTerms.join(" OR ") : boundedQuery;
+
   // ─── بناء السياق المرجعي من عدة مصادر ──────────────────────────────────
   // بدل ما نعتمد على Pinecone بس (10 مواضيع ثابتة + مقالات PubMed مخزّنة
   // وقت الـ seed)، بندور بالترتيب التالي، وكل مصدر بيتحط في السياق موسوم
@@ -67,12 +106,17 @@ const runDifferentialDiagnosisAgent = async ({
   // (evidenceBasis) بدل ما نسيب ده غامض.
   let context = "";
   let hasGroundedContext = false;
+  // بنسجّل أي مصدر فعليًا رجّع بيانات استخدمناها - ده الحقل اللي هيتضمن
+  // اسم المصدر بشكل مؤكد (مش معتمد على إن الموديل "يفتكر" يكتبه في النص
+  // زي evidenceBasis)، وهيترجع للفرونت والداتابيز صراحة
+  const groundingSourcesUsed = [];
 
   try {
-    const ragDocs = await retrieve(formattedSymptoms, language, 3);
+    const ragDocs = await retrieve(retrievalQuery, language, 3);
     if (ragDocs.length > 0) {
       context = formatContext(ragDocs, language);
       hasGroundedContext = true;
+      groundingSourcesUsed.push("pinecone");
     }
   } catch (ragError) {
     console.error(
@@ -87,10 +131,11 @@ const runDifferentialDiagnosisAgent = async ({
         searchPubMed,
         formatPubMedContext,
       } = require("../services/pubmed.service");
-      const pubmedArticles = await searchPubMed(formattedSymptoms, 3);
+      const pubmedArticles = await searchPubMed(keywordSearchQuery, 3);
       if (pubmedArticles.length > 0) {
         context = formatPubMedContext(pubmedArticles);
         hasGroundedContext = true;
+        groundingSourcesUsed.push("pubmed");
       }
     } catch (pubmedError) {
       console.error(
@@ -105,11 +150,12 @@ const runDifferentialDiagnosisAgent = async ({
       searchMedlinePlus,
       formatMedlinePlusContext,
     } = require("../services/medlineplus.service");
-    const medlineTopics = await searchMedlinePlus(formattedSymptoms, 2);
+    const medlineTopics = await searchMedlinePlus(keywordSearchQuery, 2);
     if (medlineTopics.length > 0) {
       const medlineContext = formatMedlinePlusContext(medlineTopics);
       context = [context, medlineContext].filter(Boolean).join("\n\n");
       hasGroundedContext = true;
+      groundingSourcesUsed.push("medlineplus");
     }
   } catch (medlineError) {
     console.error(
@@ -271,7 +317,7 @@ Return JSON only, in this exact shape:
   // القطع التلاتة، بعناوين واضحة، عشان أي حد بيقرا الحقل ده بس (تخزين قديم،
   // تعليمات الفولو أب، توليد الريبورت، إلخ) يشوف نفس الترتيب المطلوب:
   // القراية، بعدين التشخيص التفريقي، بعدين البروتوكول
-  const composeStructuredNote = (parsed) => {
+  const composeStructuredNote = (parsed, labFilesReviewedFlag) => {
     const readingLabel =
       language === "ar" ? "القراءة السريرية" : "Clinical Reading";
     const diagnosesLabel =
@@ -309,10 +355,36 @@ Return JSON only, in this exact shape:
         ? "لا يوجد"
         : "None";
 
+    // اسم/أسماء المصادر اللي فعليًا رجّعت بيانات استُخدمت - سطر مضمون
+    // (مش معتمد على الموديل يكتبه بنفسه) بيتحط أول النص لو فيه أي مصدر
+    const sourcesLabel = language === "ar" ? "المصادر المستخدمة" : "Sources consulted";
+    const sourceNames = {
+      pinecone: language === "ar" ? "قاعدة المعرفة الداخلية" : "Internal knowledge base",
+      pubmed: "PubMed",
+      medlineplus: "MedlinePlus",
+    };
+    const sourcesLine = groundingSourcesUsed.length
+      ? `${sourcesLabel}: ${groundingSourcesUsed.map((s) => sourceNames[s] || s).join(", ")}`
+      : `${sourcesLabel}: ${language === "ar" ? "لا يوجد (معرفة عامة للنموذج)" : "None (model's general knowledge)"}`;
+
+    // تحذير مضمون (مش نص عام) لو فيه ملفات مرفقة بس ماتقرتش فعليًا -
+    // بيظهر بس في الحالة دي تحديدًا، عشان الدكتور ميفترضش إن أي ملف مرفق
+    // اتراجع تلقائيًا
+    const filesWarningLine =
+      labFiles.length > 0 && !labFilesReviewedFlag
+        ? language === "ar"
+          ? `⚠️ تنبيه: فيه ${labFiles.length} ملف مرفق، لكن النموذج المستخدم في توليد الرد ده مايقدرش يقرا صور/PDF، فمحتوى الملفات دي ماتراجعش فعليًا.`
+          : `⚠️ Note: ${labFiles.length} file(s) were attached, but the model used to generate this response cannot read images/PDFs, so their content was NOT actually reviewed.`
+        : null;
+
     return [
+      filesWarningLine,
+      sourcesLine,
       `${readingLabel}:\n${parsed.clinicalReading}`,
       `${diagnosesLabel}:\n${diagnosesText}`,
-    ].join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   };
 
   // ─── طبقة تحقق برمجية إضافية (مش بس اعتماد على التزام الموديل بالـ prompt) ─
@@ -343,6 +415,111 @@ Return JSON only, in this exact shape:
     });
   };
 
+  // بناء استعلام كلمات مفتاحية من نص حر - نفس منطق تنضيف كلمات الحشو
+  // المستخدم فوق مع الأعراض/الملاحظات، بس معمول كدالة قابلة لإعادة
+  // الاستخدام عشان نطبّقها كمان على أسماء التشخيصات تحت
+  const buildKeywordQuery = (text) => {
+    const terms = text
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
+    return terms.length > 0 ? terms.join(" OR ") : text;
+  };
+
+  // ─── محاولة أخيرة: بحث بأسماء التشخيصات نفسها بعد رد الموديل ────────────
+  // البحث الأساسي (فوق) بيحصل بالأعراض/الملاحظات النصية بس - قبل ما الموديل
+  // يشوف الملفات المرفوعة (أشعة/تحاليل) أصلًا. يعني لو التشخيص الحقيقي طلع
+  // بناءً على قراءة الموديل لصورة/تقرير (مش من النص المكتوب)، البحث الأول
+  // مايقدرش يعرف بيه من الأساس. هنا، بعد ما عندنا أسماء التشخيصات (اللي
+  // بتعكس كل حاجة الموديل شافها، بما فيها الملفات)، بندور بيها كمحاولة
+  // أخيرة - بس لو كل محاولات البحث اللي فوق فشلت (hasGroundedContext لسه
+  // false)، عشان مانضيفش وقت شبكة زيادة في الحالة العادية اللي أصلًا لقت
+  // مرجع كويس من الأول. مفيش نداء تاني للموديل هنا خالص - بحث فقط.
+  const attemptDiagnosisBasedGrounding = async (diagnoses) => {
+    if (hasGroundedContext || !Array.isArray(diagnoses) || !diagnoses.length) {
+      return diagnoses;
+    }
+
+    const diagnosisQuery = buildKeywordQuery(
+      diagnoses.map((d) => d.diagnosis).join(" "),
+    );
+
+    let extraContext = "";
+    let extraSource = null;
+
+    try {
+      const ragDocs = await retrieve(diagnosisQuery, language, 3);
+      if (ragDocs.length > 0) {
+        extraContext = formatContext(ragDocs, language);
+        extraSource = "pinecone";
+      }
+    } catch (e) {
+      console.error("Diagnosis-based Pinecone retrieval failed:", e.message);
+    }
+
+    if (!extraContext) {
+      try {
+        const {
+          searchPubMed,
+          formatPubMedContext,
+        } = require("../services/pubmed.service");
+        const articles = await searchPubMed(diagnosisQuery, 3);
+        if (articles.length > 0) {
+          extraContext = formatPubMedContext(articles);
+          extraSource = "pubmed";
+        }
+      } catch (e) {
+        console.error("Diagnosis-based PubMed retrieval failed:", e.message);
+      }
+    }
+
+    if (!extraContext) {
+      try {
+        const {
+          searchMedlinePlus,
+          formatMedlinePlusContext,
+        } = require("../services/medlineplus.service");
+        const topics = await searchMedlinePlus(diagnosisQuery, 2);
+        if (topics.length > 0) {
+          extraContext = formatMedlinePlusContext(topics);
+          extraSource = "medlineplus";
+        }
+      } catch (e) {
+        console.error("Diagnosis-based MedlinePlus retrieval failed:", e.message);
+      }
+    }
+
+    if (!extraContext || !extraSource) return diagnoses;
+
+    groundingSourcesUsed.push(extraSource);
+    const extraContextLower = extraContext.toLowerCase();
+
+    // ترقية evidenceBasis بس لو فيه تطابق فعلي لكلمات التشخيص المهمة في
+    // النص اللي رجع - فحص بالكلمات المفتاحية بسيط (مش نداء تاني للموديل)،
+    // عشان مانرقّيش تشخيص لـ "referenced" من غير سبب حقيقي
+    return diagnoses.map((d) => {
+      if (d.evidenceBasis === "referenced") return d;
+
+      const significantWords = d.diagnosis
+        .replace(/[^\w\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()));
+
+      const matchCount = significantWords.filter((w) =>
+        extraContextLower.includes(w.toLowerCase()),
+      ).length;
+
+      // نطلب على الأقل نص الكلمات المهمة (أو كلمة واحدة لو الاسم قصير)
+      // تكون موجودة فعليًا في المرجع اللي لقيناه، مش مجرد كلمة عامة اتصادفت
+      const requiredMatches = Math.max(1, Math.ceil(significantWords.length / 2));
+
+      if (matchCount >= requiredMatches) {
+        return { ...d, evidenceBasis: "referenced" };
+      }
+      return d;
+    });
+  };
+
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const result = await chatCompletion({
@@ -353,6 +530,10 @@ Return JSON only, in this exact shape:
           data: f.data,
         })),
       });
+      // مضمون من الكود، مش افتراض - الملفات (صور/PDF) بيشوفها Gemini بس.
+      // لو الرد جه من Groq (fallback صامت لما Gemini يفشل)، الملفات
+      // المرفقة معملهاش خالص، حتى لو كانت موجودة أصلًا في الطلب
+      const labFilesReviewed = labFiles.length > 0 && result.provider === "gemini";
       const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس
@@ -394,6 +575,13 @@ Return JSON only, in this exact shape:
           : "general_knowledge",
       }));
 
+      // محاولة أخيرة بأسماء التشخيصات - بتتفعّل بس لو البحث الأول (بالأعراض/
+      // الملاحظات) مالقاش حاجة خالص، بما فيها احتمال إن الملفات المرفوعة
+      // (أشعة/تحاليل) هي اللي أدّت للتشخيص ده، مش الأعراض النصية
+      parsed.possibleDiagnoses = await attemptDiagnosisBasedGrounding(
+        parsed.possibleDiagnoses,
+      );
+
       // تطبيق طبقة التحقق البرمجي من تعارض الحساسية قبل ما نرجّع النتيجة
       parsed.possibleDiagnoses = flagAllergyConflicts(
         parsed.possibleDiagnoses,
@@ -402,12 +590,21 @@ Return JSON only, in this exact shape:
 
       return {
         // الشكل القديم (لسه بيتخزن وبيتقرا من أماكن تانية في السيستم)
-        structuredNote: composeStructuredNote(parsed),
+        structuredNote: composeStructuredNote(parsed, labFilesReviewed),
         // suggestedSpecialist بيتحط فاضي ("") من الموديل لو مفيش تخصص واضح
         // مناسب للحالة - بنسيبها زي ما هي، والفرونت/الكونترولر بيتعاملوا مع
         // الفاضي كـ "مفيش اقتراح تخصص" بدل ما نخترع واحد
         suggestedSpecialist: parsed.suggestedSpecialist,
         urgencyLevel: parsed.urgencyLevel,
+        // مضمون ومش معتمد على الموديل - أسماء المصادر الخارجية اللي فعليًا
+        // رجّعت بيانات استُخدمت وقت التوليد ده (ممكن تبقى فاضية [] لو مفيش
+        // أي مصدر رجّع حاجة، يبقى كل الرد اعتمد على معرفة الموديل العامة)
+        groundingSourcesUsed,
+        // مضمون من الكود (مش نص عام زي "الملفات اتراجعت") - true بس لو فعلًا
+        // فيه ملفات مرفقة والرد جه من Gemini (القادر يشوفهم). false لو مفيش
+        // ملفات أصلًا، أو لو حصل fallback لـ Groq وقت الطلب ده تحديدًا - عشان
+        // الفرونت يقدر يعرض تحذير صريح بدل ما يفترض دايمًا إن الملفات اتقرت
+        labFilesReviewed,
         // القطع المنظمة الخام - يستخدمها الفرونت يعرضهم في أقسام منفصلة،
         // وكمان بيتحفظوا على الكونسلتيشن نفسها عشان الـ Patient History
         // يقدر يعرضهم منظمين برضو (مش بس النص المجمّع). كل تشخيص هنا معاه

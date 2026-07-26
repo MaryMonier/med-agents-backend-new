@@ -59,6 +59,10 @@ const chatCompletion = async ({
         tokensUsed,
         costUSD: 0, // Gemini free tier
         latencyMs: Date.now() - startTime,
+        // مضمون من الكود - مش افتراض. أي كولر بيحتاج يعرف "هل الملفات
+        // اتقرت فعليًا" لازم يتحقق من الحقل ده بدل ما يفترض إن Gemini
+        // اشتغل دايمًا
+        provider: "gemini",
       };
     }
   } catch (err) {
@@ -87,6 +91,8 @@ const chatCompletion = async ({
     tokensUsed: response.usage.total_tokens,
     costUSD: 0,
     latencyMs: Date.now() - startTime,
+    // Groq نصي بس - لو كان فيه fileParts في الطلب ده، اعتبريها ماتقرتش خالص
+    provider: "groq",
   };
 };
 

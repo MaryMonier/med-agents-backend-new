@@ -165,6 +165,9 @@ const createConsultation = async (req, res) => {
       // مش بس نص واحد مجمّع
       clinicalReading,
       possibleDiagnoses,
+      // أسماء المصادر الخارجية اللي فعليًا اتستخدمت وقت توليد التشخيص
+      // (اختياري - جاي من نتيجة "Get AI Recommendation" زي باقي الحقول دي)
+      groundingSourcesUsed,
       // ميتاداتا ملفات التحاليل/الأشعة اللي اترفعت قبل الحفظ (اختياري)
       labFiles,
     } = req.body;
@@ -227,6 +230,9 @@ const createConsultation = async (req, res) => {
       clinicalReading: clinicalReading || null,
       possibleDiagnoses: Array.isArray(possibleDiagnoses)
         ? possibleDiagnoses
+        : [],
+      groundingSourcesUsed: Array.isArray(groundingSourcesUsed)
+        ? groundingSourcesUsed
         : [],
       labFiles: Array.isArray(labFiles) ? labFiles : [],
       isChronic: !!isChronic,

@@ -25,6 +25,12 @@ const consultationSchema = new mongoose.Schema(
     // Diagnosis Agent) - محفوظة منفصلة عن structuredNote (النص المجمّع) عشان
     // الـ Patient History وأي شاشة تانية تقدر تعرضهم في أقسام منظمة
     clinicalReading: { type: String },
+    // أسماء المصادر الخارجية اللي فعليًا رجّعت بيانات استُخدمت في توليد
+    // التشخيص التفريقي ده (pinecone/pubmed/medlineplus) - حقل مضمون من
+    // الكود نفسه، مش معتمد على إن الموديل يذكر المصدر بنفسه جوه النص
+    groundingSourcesUsed: [
+      { type: String, enum: ["pinecone", "pubmed", "medlineplus"] },
+    ],
     possibleDiagnoses: [
       {
         _id: false,
