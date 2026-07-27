@@ -60,7 +60,9 @@ const runDifferentialDiagnosisAgent = async ({
   // (Pinecone بيفهم معنى نص طويل عادي عن طريق الـ embedding، لكن PubMed/
   // MedlinePlus محركات بحث بكلمات مفتاحية فبيحتاجوا سقف أعلى أوسع، مش قص
   // ملاحظة الدكتور الطبيعية)
-  const retrievalQuery = [formattedSymptoms, rawInput].filter(Boolean).join(" ");
+  const retrievalQuery = [formattedSymptoms, rawInput]
+    .filter(Boolean)
+    .join(" ");
 
   // سقف أمان بس لحالات نادرة جدًا (نص ضخم اتلصق بالغلط) - مش تقصير لملاحظة
   // دكتور عادية حتى لو طويلة، 2000 حرف كفاية لفقرة كاملة بسهولة
@@ -74,12 +76,53 @@ const runDifferentialDiagnosisAgent = async ({
   // (AND ضمني) - عشان أي كلمة قوية لوحدها (زي "gallbladder") تقدر تجيب
   // نتيجة، بدل ما نحتاج كل الكلمات تتطابق مع بعض في نفس المقال
   const STOPWORDS = new Set([
-    "a", "an", "the", "on", "in", "at", "of", "for", "to", "with", "and",
-    "or", "is", "are", "was", "were", "there", "this", "that", "these",
-    "those", "it", "as", "by", "be", "been", "has", "have", "had", "not",
-    "no", "patient", "examination", "presents", "presenting", "complains",
-    "complaining", "reports", "reported", "noted", "noticed", "since",
-    "from", "into", "also", "any", "who",
+    "a",
+    "an",
+    "the",
+    "on",
+    "in",
+    "at",
+    "of",
+    "for",
+    "to",
+    "with",
+    "and",
+    "or",
+    "is",
+    "are",
+    "was",
+    "were",
+    "there",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "as",
+    "by",
+    "be",
+    "been",
+    "has",
+    "have",
+    "had",
+    "not",
+    "no",
+    "patient",
+    "examination",
+    "presents",
+    "presenting",
+    "complains",
+    "complaining",
+    "reports",
+    "reported",
+    "noted",
+    "noticed",
+    "since",
+    "from",
+    "into",
+    "also",
+    "any",
+    "who",
   ]);
 
   const filteredTerms = boundedQuery
@@ -89,6 +132,32 @@ const runDifferentialDiagnosisAgent = async ({
 
   const keywordSearchQuery =
     filteredTerms.length > 0 ? filteredTerms.join(" OR ") : boundedQuery;
+
+  // ─── فلترة: تطابق كلمة مفتاحية واحدة قوية مش كافي ──────────────────────
+  // المشكلة اللي ظهرت فعليًا: بحث OR بيقبل أي نتيجة فيها تطابق مع أقوى
+  // كلمة لوحدها (زي "gallbladder")، فمقال/صفحة عن gallbladder cancer لوحده
+  // كان بيتقبل كـ "مرجع موثوق" حتى لو الصورة السريرية الكاملة (palpable +
+  // jaundice مع بعض = Courvoisier's sign) بتأشر فعليًا على حاجة تانية
+  // تمامًا (pancreatic cancer) ومفيش أي علاقة حقيقية بين النتيجة والصورة
+  // الكاملة غير كلمة واحدة اتصادفت. أي نتيجة من أي مصدر (Pinecone/PubMed/
+  // MedlinePlus) لازم تتطابق فعليًا مع أكتر من كلمة مفتاحية واحدة من كلام
+  // الدكتور/الأعراض قبل ما نعتبرها "مرجع" ونحطها في الـ context اللي
+  // الموديل مطالب يستخدمه - مش أي تطابق عشوائي بكلمة واحدة قوية.
+  const requiredTermMatches =
+    filteredTerms.length <= 1
+      ? filteredTerms.length
+      : Math.max(2, Math.ceil(filteredTerms.length / 2));
+
+  const countMatchedTerms = (text) => {
+    const lower = (text || "").toLowerCase();
+    return filteredTerms.filter((t) => lower.includes(t.toLowerCase())).length;
+  };
+
+  // true لو مفيش كلمات مفتاحية أصلاً (نادر جدًا) أو لو النص فعلاً بيغطي
+  // عدد كافٍ من الصورة السريرية الكاملة مش كلمة واحدة بس
+  const passesMultiTermRelevance = (text) =>
+    filteredTerms.length === 0 ||
+    countMatchedTerms(text) >= requiredTermMatches;
 
   // ─── بناء السياق المرجعي من عدة مصادر ──────────────────────────────────
   // بدل ما نعتمد على Pinecone بس (10 مواضيع ثابتة + مقالات PubMed مخزّنة
@@ -112,7 +181,13 @@ const runDifferentialDiagnosisAgent = async ({
   const groundingSourcesUsed = [];
 
   try {
-    const ragDocs = await retrieve(retrievalQuery, language, 3);
+    const ragDocsRaw = await retrieve(retrievalQuery, language, 3);
+    // الـ score threshold في pinecone.service.js (0.75) مش ضمانة كافية
+    // لوحدها إن المحتوى يغطي الصورة السريرية كاملة - ممكن embedding يقرب
+    // بسبب كلمة واحدة قوية. نفس فلتر تعدد الكلمات المفتاحية بيتطبق هنا كمان
+    const ragDocs = ragDocsRaw.filter((doc) =>
+      passesMultiTermRelevance(doc.content),
+    );
     if (ragDocs.length > 0) {
       context = formatContext(ragDocs, language);
       hasGroundedContext = true;
@@ -131,7 +206,13 @@ const runDifferentialDiagnosisAgent = async ({
         searchPubMed,
         formatPubMedContext,
       } = require("../services/pubmed.service");
-      const pubmedArticles = await searchPubMed(keywordSearchQuery, 3);
+      const pubmedArticlesRaw = await searchPubMed(keywordSearchQuery, 3);
+      // بحث PubMed بمنطق OR بيرجّع مقالات ممكن تتطابق مع كلمة واحدة قوية
+      // بس (زي "gallbladder") وتفوّت باقي الصورة السريرية تمامًا - بنرفض
+      // أي مقال ماعندوش تطابق حقيقي مع أكتر من كلمة مفتاحية واحدة
+      const pubmedArticles = pubmedArticlesRaw.filter((article) =>
+        passesMultiTermRelevance(`${article.title} ${article.abstract}`),
+      );
       if (pubmedArticles.length > 0) {
         context = formatPubMedContext(pubmedArticles);
         hasGroundedContext = true;
@@ -150,7 +231,12 @@ const runDifferentialDiagnosisAgent = async ({
       searchMedlinePlus,
       formatMedlinePlusContext,
     } = require("../services/medlineplus.service");
-    const medlineTopics = await searchMedlinePlus(keywordSearchQuery, 2);
+    const medlineTopicsRaw = await searchMedlinePlus(keywordSearchQuery, 2);
+    // نفس الفلتر - MedlinePlus عنده صفحة مخصصة "Gallbladder Diseases" ممكن
+    // تتطابق مع كلمة "gallbladder" لوحدها وتفوّت باقي الصورة السريرية
+    const medlineTopics = medlineTopicsRaw.filter((topic) =>
+      passesMultiTermRelevance(`${topic.title} ${topic.summary}`),
+    );
     if (medlineTopics.length > 0) {
       const medlineContext = formatMedlinePlusContext(medlineTopics);
       context = [context, medlineContext].filter(Boolean).join("\n\n");
@@ -329,7 +415,8 @@ Return JSON only, in this exact shape:
     const testsLabel =
       language === "ar" ? "الفحوصات الموصى بها" : "Recommended tests";
     const protocolLabel = language === "ar" ? "بروتوكول العلاج" : "Protocol";
-    const evidenceLabel = language === "ar" ? "الأساس المعرفي" : "Evidence basis";
+    const evidenceLabel =
+      language === "ar" ? "الأساس المعرفي" : "Evidence basis";
     const evidenceText = (basis) =>
       basis === "referenced"
         ? language === "ar"
@@ -357,9 +444,13 @@ Return JSON only, in this exact shape:
 
     // اسم/أسماء المصادر اللي فعليًا رجّعت بيانات استُخدمت - سطر مضمون
     // (مش معتمد على الموديل يكتبه بنفسه) بيتحط أول النص لو فيه أي مصدر
-    const sourcesLabel = language === "ar" ? "المصادر المستخدمة" : "Sources consulted";
+    const sourcesLabel =
+      language === "ar" ? "المصادر المستخدمة" : "Sources consulted";
     const sourceNames = {
-      pinecone: language === "ar" ? "قاعدة المعرفة الداخلية" : "Internal knowledge base",
+      pinecone:
+        language === "ar"
+          ? "قاعدة المعرفة الداخلية"
+          : "Internal knowledge base",
       pubmed: "PubMed",
       medlineplus: "MedlinePlus",
     };
@@ -399,7 +490,8 @@ Return JSON only, in this exact shape:
     if (!Array.isArray(diagnoses) || !allergyList.length) return diagnoses;
 
     return diagnoses.map((d) => {
-      const textToScan = `${d.protocol || ""} ${d.recommendedTests || ""}`.toLowerCase();
+      const textToScan =
+        `${d.protocol || ""} ${d.recommendedTests || ""}`.toLowerCase();
       const matchedAllergy = allergyList.find(
         (a) => a && a.trim() && textToScan.includes(a.toLowerCase().trim()),
       );
@@ -485,7 +577,10 @@ Return JSON only, in this exact shape:
           extraSource = "medlineplus";
         }
       } catch (e) {
-        console.error("Diagnosis-based MedlinePlus retrieval failed:", e.message);
+        console.error(
+          "Diagnosis-based MedlinePlus retrieval failed:",
+          e.message,
+        );
       }
     }
 
@@ -511,7 +606,10 @@ Return JSON only, in this exact shape:
 
       // نطلب على الأقل نص الكلمات المهمة (أو كلمة واحدة لو الاسم قصير)
       // تكون موجودة فعليًا في المرجع اللي لقيناه، مش مجرد كلمة عامة اتصادفت
-      const requiredMatches = Math.max(1, Math.ceil(significantWords.length / 2));
+      const requiredMatches = Math.max(
+        1,
+        Math.ceil(significantWords.length / 2),
+      );
 
       if (matchCount >= requiredMatches) {
         return { ...d, evidenceBasis: "referenced" };
@@ -533,7 +631,8 @@ Return JSON only, in this exact shape:
       // مضمون من الكود، مش افتراض - الملفات (صور/PDF) بيشوفها Gemini بس.
       // لو الرد جه من Groq (fallback صامت لما Gemini يفشل)، الملفات
       // المرفقة معملهاش خالص، حتى لو كانت موجودة أصلًا في الطلب
-      const labFilesReviewed = labFiles.length > 0 && result.provider === "gemini";
+      const labFilesReviewed =
+        labFiles.length > 0 && result.provider === "gemini";
       const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس
