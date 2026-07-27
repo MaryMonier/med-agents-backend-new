@@ -29,8 +29,10 @@ const callLLM = async ({ messages, temperature, max_tokens }) => {
         maxOutputTokens: max_tokens,
       },
     });
-
-    return { choices: [{ message: { content: response.text } }] };
+    const finishReason = response.candidates?.[0]?.finishReason || "STOP";
+    return {
+      choices: [{ message: { content: response.text }, finish_reason: finishReason }],
+    };
   } catch (err) {
     console.log("Gemini failed, falling back to Groq...", err.message);
 
@@ -141,8 +143,8 @@ Medical Guidelines: ${context}
 ${unverifiedLine}`;
 
     const response = await callLLM({
-      temperature: 0.4,
-      max_tokens: 1200,
+      temperature: 0.15,
+      max_tokens: 2000,
       messages: [
         {
           role: "system",
