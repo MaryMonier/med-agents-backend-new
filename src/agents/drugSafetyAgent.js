@@ -58,16 +58,28 @@ const runDrugSafetyAgent = async ({
     const fdaData = await checkInteractions(medications);
 
     const fdaContext = fdaData
-      .map(
-        (drug) => `
-Drug: ${drug.name}
+      .map((drug) =>
+        drug.found
+          ? `
+Drug: ${drug.name} [VERIFIED IN FDA DATABASE]
 - Warnings: ${drug.warnings}
 - Interactions: ${drug.interactions}
 - Contraindications: ${drug.contraindications}
 - Dosage: ${drug.dosage}
+    `
+          : `
+Drug: ${drug.name} [NOT FOUND IN FDA DATABASE - no US label data available, likely because
+this is a regional/local brand name not marketed in the US. Do NOT treat this as "no known
+risks" — it just means FDA verification was not possible for this exact name. Rely on the
+Medical Guidelines context and your own clinical knowledge instead, and flag this explicitly
+to the doctor.]
     `,
       )
       .join("\n---\n");
+
+    const unverifiedDrugNames = fdaData
+      .filter((d) => !d.found)
+      .map((d) => d.name);
 
     const ragDocs = await retrieve(
       `drug interactions ${medications.map((m) => m.name).join(" ")}`,
@@ -102,6 +114,13 @@ Drug: ${drug.name}
           : `Patient Age: ${age} years`
         : "";
 
+    const unverifiedLine =
+      unverifiedDrugNames.length > 0
+        ? language === "ar"
+          ? `تحذير: الأدوية دي متلقتش في قاعدة بيانات FDA (${unverifiedDrugNames.join(", ")}) - لازم تفصح عن كده صراحة في قسم "FDA Verification" ومتعتبرش غياب البيانات معناه الأمان.`
+          : `Note: these drugs were NOT found in the FDA database (${unverifiedDrugNames.join(", ")}) - you must disclose this explicitly in the "FDA Verification" section, and must not treat the absence of data as evidence of safety.`
+        : "";
+
     const userPrompt =
       language === "ar"
         ? `حلل سلامة الأدوية:
@@ -110,14 +129,16 @@ Drug: ${drug.name}
 الأمراض المزمنة: ${conditionsList}
 ${ageLine}
 بيانات FDA: ${fdaContext}
-إرشادات طبية: ${context}`
+إرشادات طبية: ${context}
+${unverifiedLine}`
         : `Analyze medication safety:
 Medications: ${medicationsList}
 Allergies: ${allergiesList}
 Chronic Conditions: ${conditionsList}
 ${ageLine}
 FDA Data: ${fdaContext}
-Medical Guidelines: ${context}`;
+Medical Guidelines: ${context}
+${unverifiedLine}`;
 
     const response = await callLLM({
       temperature: 0.4,
@@ -149,6 +170,10 @@ STRICT OUTPUT FORMAT (the client parses this exact format, so follow it precisel
   3. "* Dosage Considerations" — dosage-relevant notes, especially age-related (pediatric/
      geriatric) concerns
   4. "* Contraindications" — situations/conditions where a listed drug should not be used
+  5. "* FDA Verification" — for EACH drug, one bullet stating whether it was found in the FDA
+     database ("verified") or not ("not verified — based on general medical knowledge only,
+     please confirm dosing/interactions independently"). This section is mandatory even when
+     every drug is verified.
 - Give at least one bullet per drug per relevant section — don't collapse multiple drugs' distinct
   warnings into a single vague bullet. Be specific and use the actual FDA data given to you rather
   than a generic disclaimer.
