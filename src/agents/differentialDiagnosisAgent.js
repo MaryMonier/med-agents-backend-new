@@ -3,6 +3,43 @@ const { retrieve, formatContext } = require("../services/pinecone.service");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// ─── استخلاص نص من ملفات التحاليل/الأشعة عشان تدخل في بحث المراجع ─────────
+// PubMed/MedlinePlus/Pinecone كلهم بيشتغلوا على نص بس - مش قادرين "يشوفوا"
+// صورة أو PDF. علشان نتايج الملفات المرفقة تدخل في بحث المراجع (مش بس في
+// تشخيص Gemini النهائي)، بنعمل نداء منفصل وقصير لـ Gemini الأول (vision)
+// نطلب منه بس "استخرج القيم/الملاحظات الموجودة فعليًا في الملفات دي كنص"
+// من غير أي تشخيص أو تفسير - وبعدين النص ده بيتضاف لمصادر البحث الأخرى.
+//
+// لو Gemini فشل ورجع fallback لـ Groq، النداء ده هيرجع فاضي عمدًا (مش نص
+// عشوائي) لأن Groq مش شايف الملفات أصلاً - رجّعله نص هيبقى مضلل مش مفيد.
+const extractLabFileFindings = async (labFiles, language) => {
+  if (!labFiles || labFiles.length === 0) return "";
+
+  try {
+    const result = await chatCompletion({
+      systemPrompt: `You are given one or more attached lab result / radiology / imaging files.
+Extract ONLY the concrete factual findings, values, or observations explicitly present in them
+(e.g. "WBC 14,000", "chest X-ray shows right lower lobe consolidation", "elevated ALT/AST").
+Do NOT diagnose, do NOT interpret, do NOT speculate, do NOT add any commentary or headings.
+Return a short plain comma-separated list of findings only (max ~40 words total). If a file is
+unreadable, blank, or contains no extractable medical content, silently skip it. If nothing at
+all is extractable from any file, return an empty string.`,
+      userMessage: "Extract the findings from the attached file(s).",
+      jsonMode: false,
+      fileParts: labFiles.map((f) => ({ mimeType: f.mimeType, data: f.data })),
+    });
+
+    // لو Gemini فشل والـ fallback كان Groq، يبقى النص اللي رجع مش شايف
+    // الملفات فعليًا - نرجّع فاضي بدل ما ندخل نص مش حقيقي في بحث المراجع
+    if (result.provider !== "gemini") return "";
+
+    return (result.content || "").trim();
+  } catch (err) {
+    console.error("[extractLabFileFindings] failed:", err.message);
+    return "";
+  }
+};
+
 // ─── Differential Diagnosis Agent ──────────────────────────────────────────
 // الإيجنت الرئيسي اللي بيشتغل مع الكونسلتيشن والفولو أب (بديل إيجنت
 // "Clinical Recommendation" القديم). شغلته: ياخد كلام الدكتور + الأعراض
@@ -56,11 +93,16 @@ const runDifferentialDiagnosisAgent = async ({
   // غالبًا بتتكتب هنا مش في خانة الأعراض، ولو ماستخدمناهاش في البحث، النظام
   // بيدور بجزء من الصورة السريرية بس ويفوّت مراجع مهمة كانت ممكن تتلاقى.
   //
+  // وبنضيف كمان أي findings اتستخرجت فعليًا من ملفات التحاليل/الأشعة
+  // المرفقة (لو موجودة) - عشان بحث PubMed/MedlinePlus/Pinecone كمان يعتمد
+  // على نتايج الملفات مش بس على كلام الدكتور والأعراض النصية
+  const labFileFindings = await extractLabFileFindings(labFiles, language);
+
   // مفيش تقصير للنص هنا خالص - بيتحط تقصير مختلف لكل مصدر تحت حسب طبيعته
   // (Pinecone بيفهم معنى نص طويل عادي عن طريق الـ embedding، لكن PubMed/
   // MedlinePlus محركات بحث بكلمات مفتاحية فبيحتاجوا سقف أعلى أوسع، مش قص
   // ملاحظة الدكتور الطبيعية)
-  const retrievalQuery = [formattedSymptoms, rawInput]
+  const retrievalQuery = [formattedSymptoms, rawInput, labFileFindings]
     .filter(Boolean)
     .join(" ");
 
@@ -180,6 +222,12 @@ const runDifferentialDiagnosisAgent = async ({
   // زي evidenceBasis)، وهيترجع للفرونت والداتابيز صراحة
   const groundingSourcesUsed = [];
 
+  // بنحتفظ بنص كل مصدر لوحده كمان (مش بس الـ context المدموج) - عشان لما
+  // نحدد evidenceBasis لكل تشخيص، نقدر كمان نقول "جاي من PubMed تحديدًا"
+  // أو "من MedlinePlus" أو "من قاعدة المعرفة الداخلية" - مش بس "فيه مرجع"
+  // بشكل عام بدون تحديد أي مصدر بالظبط
+  const sourceTexts = { pinecone: "", pubmed: "", medlineplus: "" };
+
   try {
     const ragDocsRaw = await retrieve(retrievalQuery, language, 3);
     // الـ score threshold في pinecone.service.js (0.75) مش ضمانة كافية
@@ -190,6 +238,7 @@ const runDifferentialDiagnosisAgent = async ({
     );
     if (ragDocs.length > 0) {
       context = formatContext(ragDocs, language);
+      sourceTexts.pinecone = context;
       hasGroundedContext = true;
       groundingSourcesUsed.push("pinecone");
     }
@@ -215,6 +264,7 @@ const runDifferentialDiagnosisAgent = async ({
       );
       if (pubmedArticles.length > 0) {
         context = formatPubMedContext(pubmedArticles);
+        sourceTexts.pubmed = context;
         hasGroundedContext = true;
         groundingSourcesUsed.push("pubmed");
       }
@@ -239,6 +289,7 @@ const runDifferentialDiagnosisAgent = async ({
     );
     if (medlineTopics.length > 0) {
       const medlineContext = formatMedlinePlusContext(medlineTopics);
+      sourceTexts.medlineplus = medlineContext;
       context = [context, medlineContext].filter(Boolean).join("\n\n");
       hasGroundedContext = true;
       groundingSourcesUsed.push("medlineplus");
@@ -417,14 +468,25 @@ Return JSON only, in this exact shape:
     const protocolLabel = language === "ar" ? "بروتوكول العلاج" : "Protocol";
     const evidenceLabel =
       language === "ar" ? "الأساس المعرفي" : "Evidence basis";
-    const evidenceText = (basis) =>
-      basis === "referenced"
-        ? language === "ar"
-          ? "مستند لمرجع موثّق"
-          : "Backed by a cited reference"
-        : language === "ar"
-          ? "معرفة عامة للنموذج (غير مستند لمرجع مباشر)"
-          : "Model's general medical knowledge (no direct reference)";
+    const sourceDisplayNames = {
+      pinecone:
+        language === "ar"
+          ? "قاعدة المعرفة الداخلية"
+          : "internal knowledge base",
+      pubmed: "PubMed",
+      medlineplus: "MedlinePlus",
+    };
+    const evidenceText = (basis, referenceSource) => {
+      if (basis === "referenced") {
+        const sourceName = sourceDisplayNames[referenceSource] || null;
+        return language === "ar"
+          ? `مستند لمرجع موثّق${sourceName ? ` (${sourceName})` : ""}`
+          : `Backed by a cited reference${sourceName ? ` (${sourceName})` : ""}`;
+      }
+      return language === "ar"
+        ? "معرفة عامة للنموذج (غير مستند لمرجع مباشر)"
+        : "Model's general medical knowledge (no direct reference)";
+    };
 
     const diagnosesText = (parsed.possibleDiagnoses || []).length
       ? parsed.possibleDiagnoses
@@ -435,7 +497,7 @@ Return JSON only, in this exact shape:
               `   ${againstLabel}: ${d.againstReasoning}\n` +
               `   ${testsLabel}: ${d.recommendedTests}\n` +
               `   ${protocolLabel}: ${d.protocol}\n` +
-              `   ${evidenceLabel}: ${evidenceText(d.evidenceBasis)}`,
+              `   ${evidenceLabel}: ${evidenceText(d.evidenceBasis, d.referenceSource)}`,
           )
           .join("\n\n")
       : language === "ar"
@@ -518,6 +580,61 @@ Return JSON only, in this exact shape:
     return terms.length > 0 ? terms.join(" OR ") : text;
   };
 
+  // ─── تحديد evidenceBasis + المصدر بالظبط بشكل حتمي (مش رأي الموديل) ────
+  // قبل كده، evidenceBasis كان حقل بيرجّعه الموديل نفسه في الـ JSON بناءً
+  // على تقييمه الشخصي - وده بـ temperature 0.3 مش ثابت، فنفس السياق ممكن
+  // يترجم "referenced" مرة و"general_knowledge" مرة تانية من غير أي سبب
+  // حقيقي غير عشوائية الموديل. الدالة دي بتاخد قرار evidenceBasis (وكمان
+  // اسم المصدر بالظبط - pinecone/pubmed/medlineplus) بعيدًا عن رأي الموديل
+  // خالص - بتفحص بالكود (تطابق كلمات مفتاحية) هل اسم التشخيص فعلاً
+  // موجود/مذكور في نص كل مصدر لوحده.
+  const matchesReference = (matchText, referenceText) => {
+    if (!referenceText) return false;
+
+    const significantWords = matchText
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()));
+
+    if (significantWords.length === 0) return false;
+
+    const referenceTextLower = referenceText.toLowerCase();
+    const matchCount = significantWords.filter((w) =>
+      referenceTextLower.includes(w.toLowerCase()),
+    ).length;
+
+    // نطلب على الأقل نص الكلمات المهمة (أو كلمة واحدة لو الاسم قصير) تكون
+    // موجودة فعليًا في المرجع، مش مجرد كلمة عامة اتصادفت
+    const requiredMatches = Math.max(1, Math.ceil(significantWords.length / 2));
+    return matchCount >= requiredMatches;
+  };
+
+  // بيرجع { evidenceBasis, referenceSource } - referenceSource بيبقى
+  // "pinecone" / "pubmed" / "medlineplus" لو اتطابق مع مصدر واحد بالظبط،
+  // أو أول مصدر اتطابق لو اتطابق مع أكتر من واحد، أو null لو مفيش تطابق
+  //
+  // بنفحص التطابق على اسم التشخيص + supportingReasoning مع بعض، مش اسم
+  // التشخيص لوحده - اسم التشخيص نص حر بيتصاغ من جديد كل مرة (Gemini بـ
+  // temperature 0.3)، فنفس التشخيص ممكن يتكتب "Pancreatic head
+  // adenocarcinoma" مرة و"Adenocarcinoma of the head of the pancreas" مرة
+  // تانية، وده كان بيغيّر نتيجة evidenceBasis رغم إن المعنى الطبي واحد.
+  // supportingReasoning بيستخدم مصطلحات أقرب لكلام الدكتور نفسه (زي
+  // "palpable gallbladder", "jaundice") فبيديّ تطابق أثبت وأقل حساسية
+  // لاختلاف صياغة اسم التشخيص من مرة للتانية.
+  const computeEvidenceBasis = (diagnosisObj, sources) => {
+    const matchText = [diagnosisObj.diagnosis, diagnosisObj.supportingReasoning]
+      .filter(Boolean)
+      .join(" ");
+
+    const sourceOrder = ["pinecone", "pubmed", "medlineplus"];
+    for (const src of sourceOrder) {
+      if (matchesReference(matchText, sources[src])) {
+        return { evidenceBasis: "referenced", referenceSource: src };
+      }
+    }
+    return { evidenceBasis: "general_knowledge", referenceSource: null };
+  };
+
   // ─── محاولة أخيرة: بحث بأسماء التشخيصات نفسها بعد رد الموديل ────────────
   // البحث الأساسي (فوق) بيحصل بالأعراض/الملاحظات النصية بس - قبل ما الموديل
   // يشوف الملفات المرفوعة (أشعة/تحاليل) أصلًا. يعني لو التشخيص الحقيقي طلع
@@ -587,34 +704,16 @@ Return JSON only, in this exact shape:
     if (!extraContext || !extraSource) return diagnoses;
 
     groundingSourcesUsed.push(extraSource);
-    const extraContextLower = extraContext.toLowerCase();
+    sourceTexts[extraSource] = [sourceTexts[extraSource], extraContext]
+      .filter(Boolean)
+      .join("\n\n");
 
     // ترقية evidenceBasis بس لو فيه تطابق فعلي لكلمات التشخيص المهمة في
-    // النص اللي رجع - فحص بالكلمات المفتاحية بسيط (مش نداء تاني للموديل)،
-    // عشان مانرقّيش تشخيص لـ "referenced" من غير سبب حقيقي
+    // النص اللي رجع - نفس دالة computeEvidenceBasis الحتمية اللي بتتطبق
+    // في كل حالة تانية، مش فحص مكرر هنا
     return diagnoses.map((d) => {
       if (d.evidenceBasis === "referenced") return d;
-
-      const significantWords = d.diagnosis
-        .replace(/[^\w\s]/g, " ")
-        .split(/\s+/)
-        .filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()));
-
-      const matchCount = significantWords.filter((w) =>
-        extraContextLower.includes(w.toLowerCase()),
-      ).length;
-
-      // نطلب على الأقل نص الكلمات المهمة (أو كلمة واحدة لو الاسم قصير)
-      // تكون موجودة فعليًا في المرجع اللي لقيناه، مش مجرد كلمة عامة اتصادفت
-      const requiredMatches = Math.max(
-        1,
-        Math.ceil(significantWords.length / 2),
-      );
-
-      if (matchCount >= requiredMatches) {
-        return { ...d, evidenceBasis: "referenced" };
-      }
-      return d;
+      return { ...d, ...computeEvidenceBasis(d, sourceTexts) };
     });
   };
 
@@ -641,7 +740,6 @@ Return JSON only, in this exact shape:
 
       const allowedUrgency = ["low", "medium", "critical", "unknown"];
       const allowedLikelihood = ["high", "moderate", "low"];
-      const allowedEvidenceBasis = ["referenced", "general_knowledge"];
       const diagnosesValid =
         Array.isArray(parsed.possibleDiagnoses) &&
         parsed.possibleDiagnoses.every(
@@ -664,14 +762,14 @@ Return JSON only, in this exact shape:
         throw new Error("Invalid AI response structure");
       }
 
-      // evidenceBasis حقل جديد - بنتسامح لو الموديل نساه بدل ما نرفض الرد
-      // كله، وبنطبّعه لقيمة افتراضية آمنة ("general_knowledge") بدل ما
-      // نسيبه undefined ويكسر أي كود تاني بيعتمد عليه لاحقًا
+      // evidenceBasis + referenceSource: مش بنسيبها لتقييم الموديل الشخصي
+      // (ده كان بيتغير من مرة للتانية بسبب temperature) - بنحسم القيمة دي
+      // بالكود نفسه (تطابق كلمات مفتاحية حقيقي مع نص كل مصدر لوحده)، مش
+      // برأي الموديل. referenceSource بتقول بالظبط المصدر (pinecone/pubmed/
+      // medlineplus) لو فيه تطابق، أو null لو مفيش
       parsed.possibleDiagnoses = parsed.possibleDiagnoses.map((d) => ({
         ...d,
-        evidenceBasis: allowedEvidenceBasis.includes(d.evidenceBasis)
-          ? d.evidenceBasis
-          : "general_knowledge",
+        ...computeEvidenceBasis(d, sourceTexts),
       }));
 
       // محاولة أخيرة بأسماء التشخيصات - بتتفعّل بس لو البحث الأول (بالأعراض/

@@ -16,22 +16,23 @@ const {
   getAllActiveMedicationsForPatient,
 } = require("./prescriptionController");
 
-// أقصى عدد ملفات بنبعتها فعليًا للإيجنت في الطلب الواحد (حتى لو الكونسلتيشن
-// فيها أكتر) - عشان الـ payload المبعوت لـ Gemini يفضل في حجم معقول
-const MAX_LAB_FILES_PER_REQUEST = 4;
-
 /**
  * بتاخد ليستة labFiles (زي ما بترجع من endpoint الرفع: [{url, mimeType,
  * originalName}]) وبتقرا كل ملف فعليًا من الديسك وترجعه base64 عشان
  * يتبعت لإيجنت التشخيص التفريقي (Gemini بس هو اللي بيشوفهم فعليًا). أي
  * ملف مش موجود على الديسك أو حصل معاه خطأ في القراية بيتجاهل بصمت بدل ما
  * يوقف الطلب كله.
+ *
+ * ملحوظة: مفيش cap على عدد الملفات هنا عن قصد - كل ملف مرفق بيتقرا
+ * ويتبعت للإيجنت. لو الدكتور رفع عدد كبير جدًا من الملفات (PDFs كبيرة
+ * خصوصًا)، الـ payload المبعوت لـ Gemini ممكن يكبر وممكن يأثر على
+ * الـ latency أو يوصل لحد الـ request size من عند Gemini نفسه - ده تريد-أوف
+ * واعي مقابل ضمان إن كل التحاليل بتتقرا فعليًا.
  */
 const readLabFilesAsBase64 = (labFiles = []) => {
   if (!Array.isArray(labFiles) || labFiles.length === 0) return [];
 
   return labFiles
-    .slice(0, MAX_LAB_FILES_PER_REQUEST)
     .map((file) => {
       try {
         const filename = path.basename(file.url || "");
