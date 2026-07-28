@@ -1,7 +1,44 @@
+const crypto = require("crypto");
 const { chatCompletion } = require("../services/openai.service");
 const { retrieve, formatContext } = require("../services/pinecone.service");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ─── كاش نتايج البحث الخارجي (Pinecone/PubMed/MedlinePlus) ──────────────
+// المشكلة اللي كانت بتحصل: الدكتور يدوس "Get AI recommendation" مرتين
+// على نفس الحالة بالظبط (نفس الأعراض/الملاحظات) - PubMed API حي، فمش
+// مضمون يرجّع نفس المقالات المرة التانية، فالنتيجة evidenceBasis كانت
+// بتتغير من مرة للتانية رغم إن الحالة والتشخيص واحد بالظبط. الحل: بنعمل
+// كاش بسيط (في الذاكرة) مفتاحه hash لنص الاستعلام (retrievalQuery) - لو
+// نفس الاستعلام بالظبط اتسأل قبل كده خلال آخر ساعة، بنستخدم نفس النتايج
+// المحفوظة بدل ما نضرب PubMed/MedlinePlus/Pinecone تاني، فالنتيجة تبقى
+// ثابتة 100% لنفس الحالة طول ما هي نفسها حرفيًا.
+//
+// ملحوظة: الكاش ده في الذاكرة بس (بيتصفر لو السيرفر اتعمله ريستارت) -
+// كافي لمشكلة "دوست الزرار مرتين ورا بعض"، مش المفروض يكون مصدر حقيقة
+// دائم لمدة أطول من كده.
+const RETRIEVAL_CACHE_TTL_MS = 60 * 60 * 1000; // ساعة
+const retrievalCache = new Map();
+
+const hashQuery = (text) =>
+  crypto
+    .createHash("sha256")
+    .update(text || "")
+    .digest("hex");
+
+const getCachedRetrieval = (query) => {
+  const entry = retrievalCache.get(hashQuery(query));
+  if (!entry) return null;
+  if (Date.now() - entry.savedAt > RETRIEVAL_CACHE_TTL_MS) {
+    retrievalCache.delete(hashQuery(query));
+    return null;
+  }
+  return entry.data;
+};
+
+const setCachedRetrieval = (query, data) => {
+  retrievalCache.set(hashQuery(query), { data, savedAt: Date.now() });
+};
 
 // ─── استخلاص نص من ملفات التحاليل/الأشعة عشان تدخل في بحث المراجع ─────────
 // PubMed/MedlinePlus/Pinecone كلهم بيشتغلوا على نص بس - مش قادرين "يشوفوا"
@@ -40,7 +77,55 @@ all is extractable from any file, return an empty string.`,
   }
 };
 
-// ─── Differential Diagnosis Agent ──────────────────────────────────────────
+// ─── مرادفات طبية للصورة السريرية ───────────────────────────────────────
+// المشكلة: كلام الدكتور الحر ("yellowish discoloration of sclera") نادرًا
+// ما يتطابق حرفيًا مع صياغة المقالات الطبية في PubMed ("jaundice",
+// "icterus"). بدل ما نستبدل كلام الدكتور بمرادف، بنبعت الاتنين مع بعض -
+// النص الأصلي + المرادفات الطبية المكافئة - عشان لو PubMed استخدم أي واحدة
+// من الصيغتين، البحث والتطابق (evidenceBasis) يقدروا يمسكوها.
+//
+// نداء واحد بس لكل حالة (مش نداء لكل تشخيص) - بيرجّع قائمة مسطحة من
+// المصطلحات، مش تصنيف لكل كلمة لوحدها، عشان يفضل بسيط وسريع. بالإنجليزي
+// دايمًا (حتى لو الدكتور كتب بالعربي) لأن المقالات الطبية في PubMed
+// إنجليزي، فالمرادف المفيد فعليًا للبحث لازم يكون بنفس لغة المصدر.
+const synonymCache = new Map();
+const SYNONYM_CACHE_TTL_MS = 60 * 60 * 1000;
+
+const getMedicalSynonyms = async (clinicalText) => {
+  if (!clinicalText || !clinicalText.trim()) return [];
+
+  const key = hashQuery(clinicalText);
+  const cached = synonymCache.get(key);
+  if (cached && Date.now() - cached.savedAt < SYNONYM_CACHE_TTL_MS) {
+    return cached.synonyms;
+  }
+
+  try {
+    const result = await chatCompletion({
+      systemPrompt: `You are given a doctor's free-text clinical note/symptoms.
+List the standard English medical/clinical terminology equivalents for the concepts mentioned
+(e.g. "yellowish discoloration of sclera" -> "jaundice", "icterus"; "palpable gallbladder" with
+jaundice -> "Courvoisier's sign"). Only include real, standard medical terms - do NOT invent
+terms, do NOT diagnose, do NOT add commentary. Respond ONLY with valid JSON in this exact shape,
+no extra text: {"synonyms": ["term1", "term2", ...]}. Max 15 terms. If nothing maps to a standard
+medical term, return {"synonyms": []}.`,
+      userMessage: clinicalText,
+      jsonMode: true,
+    });
+
+    const parsed = JSON.parse(result.content);
+    const synonyms = Array.isArray(parsed?.synonyms)
+      ? parsed.synonyms.filter((s) => typeof s === "string" && s.trim())
+      : [];
+
+    synonymCache.set(key, { synonyms, savedAt: Date.now() });
+    return synonyms;
+  } catch (err) {
+    console.error("[getMedicalSynonyms] failed:", err.message);
+    return [];
+  }
+};
+
 // الإيجنت الرئيسي اللي بيشتغل مع الكونسلتيشن والفولو أب (بديل إيجنت
 // "Clinical Recommendation" القديم). شغلته: ياخد كلام الدكتور + الأعراض
 // ويرجّع تشخيص تفريقي حقيقي منظم: قراءة سريرية، بعدين ليستة تشخيصات تفريقية
@@ -98,11 +183,23 @@ const runDifferentialDiagnosisAgent = async ({
   // على نتايج الملفات مش بس على كلام الدكتور والأعراض النصية
   const labFileFindings = await extractLabFileFindings(labFiles, language);
 
+  // مرادفات طبية للصورة السريرية كلها (أعراض + كلام الدكتور + findings
+  // الملفات) - بتتضاف لكلام الدكتور الأصلي، مش بدل منه، عشان البحث يستفيد
+  // من الاتنين مع بعض (شرح كامل تحت تعريف getMedicalSynonyms فوق)
+  const medicalSynonyms = await getMedicalSynonyms(
+    [formattedSymptoms, rawInput, labFileFindings].filter(Boolean).join(" "),
+  );
+
   // مفيش تقصير للنص هنا خالص - بيتحط تقصير مختلف لكل مصدر تحت حسب طبيعته
   // (Pinecone بيفهم معنى نص طويل عادي عن طريق الـ embedding، لكن PubMed/
   // MedlinePlus محركات بحث بكلمات مفتاحية فبيحتاجوا سقف أعلى أوسع، مش قص
   // ملاحظة الدكتور الطبيعية)
-  const retrievalQuery = [formattedSymptoms, rawInput, labFileFindings]
+  const retrievalQuery = [
+    formattedSymptoms,
+    rawInput,
+    labFileFindings,
+    medicalSynonyms.join(" "),
+  ]
     .filter(Boolean)
     .join(" ");
 
@@ -220,85 +317,117 @@ const runDifferentialDiagnosisAgent = async ({
   // بنسجّل أي مصدر فعليًا رجّع بيانات استخدمناها - ده الحقل اللي هيتضمن
   // اسم المصدر بشكل مؤكد (مش معتمد على إن الموديل "يفتكر" يكتبه في النص
   // زي evidenceBasis)، وهيترجع للفرونت والداتابيز صراحة
-  const groundingSourcesUsed = [];
+  let groundingSourcesUsed = [];
 
   // بنحتفظ بنص كل مصدر لوحده كمان (مش بس الـ context المدموج) - عشان لما
   // نحدد evidenceBasis لكل تشخيص، نقدر كمان نقول "جاي من PubMed تحديدًا"
   // أو "من MedlinePlus" أو "من قاعدة المعرفة الداخلية" - مش بس "فيه مرجع"
   // بشكل عام بدون تحديد أي مصدر بالظبط
-  const sourceTexts = { pinecone: "", pubmed: "", medlineplus: "" };
+  let sourceTexts = { pinecone: "", pubmed: "", medlineplus: "" };
 
-  try {
-    const ragDocsRaw = await retrieve(retrievalQuery, language, 3);
-    // الـ score threshold في pinecone.service.js (0.75) مش ضمانة كافية
-    // لوحدها إن المحتوى يغطي الصورة السريرية كاملة - ممكن embedding يقرب
-    // بسبب كلمة واحدة قوية. نفس فلتر تعدد الكلمات المفتاحية بيتطبق هنا كمان
-    const ragDocs = ragDocsRaw.filter((doc) =>
-      passesMultiTermRelevance(doc.content),
-    );
-    if (ragDocs.length > 0) {
-      context = formatContext(ragDocs, language);
-      sourceTexts.pinecone = context;
-      hasGroundedContext = true;
-      groundingSourcesUsed.push("pinecone");
+  const cachedRetrieval = getCachedRetrieval(retrievalQuery);
+
+  if (cachedRetrieval) {
+    // نفس الحالة بالظبط اتسألت قبل كده - بنستخدم نفس نتايج المصادر
+    // الخارجية زي ما هي، من غير ما نضرب PubMed/MedlinePlus تاني ونخاطر
+    // بنتايج مختلفة لنفس الحالة. بننسخ الـ array/object هنا (مش نستخدم نفس
+    // المرجع المخزّن في الكاش) عشان أي تعديل لاحق (زي
+    // attemptDiagnosisBasedGrounding بتاعة .push) ميتراكمش جوه القيمة
+    // المحفوظة ويأثر على الطلبات الجاية بعد كده
+    context = cachedRetrieval.context;
+    hasGroundedContext = cachedRetrieval.hasGroundedContext;
+    groundingSourcesUsed = [...cachedRetrieval.groundingSourcesUsed];
+    sourceTexts = { ...cachedRetrieval.sourceTexts };
+  } else {
+    try {
+      const ragDocsRaw = await retrieve(retrievalQuery, language, 3);
+      // الـ score threshold في pinecone.service.js (0.75) مش ضمانة كافية
+      // لوحدها إن المحتوى يغطي الصورة السريرية كاملة - ممكن embedding يقرب
+      // بسبب كلمة واحدة قوية. نفس فلتر تعدد الكلمات المفتاحية بيتطبق هنا كمان
+      const ragDocs = ragDocsRaw.filter((doc) =>
+        passesMultiTermRelevance(doc.content),
+      );
+      if (ragDocs.length > 0) {
+        context = formatContext(ragDocs, language);
+        sourceTexts.pinecone = context;
+        hasGroundedContext = true;
+        groundingSourcesUsed.push("pinecone");
+      }
+    } catch (ragError) {
+      console.error(
+        "Pinecone retrieval failed, continuing without it:",
+        ragError.message,
+      );
     }
-  } catch (ragError) {
-    console.error(
-      "Pinecone retrieval failed, continuing without it:",
-      ragError.message,
-    );
-  }
 
-  if (!hasGroundedContext) {
+    if (!hasGroundedContext) {
+      try {
+        const {
+          searchPubMed,
+          formatPubMedContext,
+        } = require("../services/pubmed.service");
+        const pubmedArticlesRaw = await searchPubMed(keywordSearchQuery, 3);
+        // بحث PubMed بمنطق OR بيرجّع مقالات ممكن تتطابق مع كلمة واحدة قوية
+        // بس (زي "gallbladder") وتفوّت باقي الصورة السريرية تمامًا - بنرفض
+        // أي مقال ماعندوش تطابق حقيقي مع أكتر من كلمة مفتاحية واحدة
+        const pubmedArticles = pubmedArticlesRaw.filter((article) =>
+          passesMultiTermRelevance(`${article.title} ${article.abstract}`),
+        );
+        if (pubmedArticles.length > 0) {
+          context = formatPubMedContext(pubmedArticles);
+          sourceTexts.pubmed = context;
+          hasGroundedContext = true;
+          groundingSourcesUsed.push("pubmed");
+        }
+      } catch (pubmedError) {
+        console.error(
+          "PubMed retrieval failed, continuing without it:",
+          pubmedError.message,
+        );
+      }
+    }
+
     try {
       const {
-        searchPubMed,
-        formatPubMedContext,
-      } = require("../services/pubmed.service");
-      const pubmedArticlesRaw = await searchPubMed(keywordSearchQuery, 3);
-      // بحث PubMed بمنطق OR بيرجّع مقالات ممكن تتطابق مع كلمة واحدة قوية
-      // بس (زي "gallbladder") وتفوّت باقي الصورة السريرية تمامًا - بنرفض
-      // أي مقال ماعندوش تطابق حقيقي مع أكتر من كلمة مفتاحية واحدة
-      const pubmedArticles = pubmedArticlesRaw.filter((article) =>
-        passesMultiTermRelevance(`${article.title} ${article.abstract}`),
+        searchMedlinePlus,
+        formatMedlinePlusContext,
+      } = require("../services/medlineplus.service");
+      const medlineTopicsRaw = await searchMedlinePlus(keywordSearchQuery, 2);
+      // نفس الفلتر - MedlinePlus عنده صفحة مخصصة "Gallbladder Diseases" ممكن
+      // تتطابق مع كلمة "gallbladder" لوحدها وتفوّت باقي الصورة السريرية
+      const medlineTopics = medlineTopicsRaw.filter((topic) =>
+        passesMultiTermRelevance(`${topic.title} ${topic.summary}`),
       );
-      if (pubmedArticles.length > 0) {
-        context = formatPubMedContext(pubmedArticles);
-        sourceTexts.pubmed = context;
+      if (medlineTopics.length > 0) {
+        const medlineContext = formatMedlinePlusContext(medlineTopics);
+        sourceTexts.medlineplus = medlineContext;
+        context = [context, medlineContext].filter(Boolean).join("\n\n");
         hasGroundedContext = true;
-        groundingSourcesUsed.push("pubmed");
+        groundingSourcesUsed.push("medlineplus");
       }
-    } catch (pubmedError) {
+    } catch (medlineError) {
       console.error(
-        "PubMed retrieval failed, continuing without it:",
-        pubmedError.message,
+        "MedlinePlus retrieval failed, continuing without it:",
+        medlineError.message,
       );
     }
-  }
 
-  try {
-    const {
-      searchMedlinePlus,
-      formatMedlinePlusContext,
-    } = require("../services/medlineplus.service");
-    const medlineTopicsRaw = await searchMedlinePlus(keywordSearchQuery, 2);
-    // نفس الفلتر - MedlinePlus عنده صفحة مخصصة "Gallbladder Diseases" ممكن
-    // تتطابق مع كلمة "gallbladder" لوحدها وتفوّت باقي الصورة السريرية
-    const medlineTopics = medlineTopicsRaw.filter((topic) =>
-      passesMultiTermRelevance(`${topic.title} ${topic.summary}`),
-    );
-    if (medlineTopics.length > 0) {
-      const medlineContext = formatMedlinePlusContext(medlineTopics);
-      sourceTexts.medlineplus = medlineContext;
-      context = [context, medlineContext].filter(Boolean).join("\n\n");
-      hasGroundedContext = true;
-      groundingSourcesUsed.push("medlineplus");
+    // بنسجّل نتيجة البحث دي في الكاش - أي طلب تاني بنفس retrievalQuery
+    // بالظبط (زي دوس الزرار مرتين على نفس الحالة) هياخد نفس المراجع دي
+    // حرفيًا، مش نتيجة جديدة من PubMed/MedlinePlus ممكن تختلف
+    // بنسجّل في الكاش بس لو فعلاً لقينا مرجع (hasGroundedContext=true) -
+    // لو محدش رجّع حاجة (مثلاً PubMed اتأخر أو الفلتر رفض كل النتايج في
+    // اللحظة دي)، مش بنسجّل النتيجة السلبية دي، عشان أي محاولة تانية تقدر
+    // تجرب البحث من جديد بدل ما تفضل "عالقة" على general_knowledge لمدة
+    // الـ TTL كله رغم إن السبب كان عارض ومؤقت
+    if (hasGroundedContext) {
+      setCachedRetrieval(retrievalQuery, {
+        context,
+        hasGroundedContext,
+        groundingSourcesUsed: [...groundingSourcesUsed],
+        sourceTexts: { ...sourceTexts },
+      });
     }
-  } catch (medlineError) {
-    console.error(
-      "MedlinePlus retrieval failed, continuing without it:",
-      medlineError.message,
-    );
   }
 
   const followupBlock =
@@ -613,22 +742,30 @@ Return JSON only, in this exact shape:
   // "pinecone" / "pubmed" / "medlineplus" لو اتطابق مع مصدر واحد بالظبط،
   // أو أول مصدر اتطابق لو اتطابق مع أكتر من واحد، أو null لو مفيش تطابق
   //
-  // بنفحص التطابق على اسم التشخيص + supportingReasoning مع بعض، مش اسم
-  // التشخيص لوحده - اسم التشخيص نص حر بيتصاغ من جديد كل مرة (Gemini بـ
-  // temperature 0.3)، فنفس التشخيص ممكن يتكتب "Pancreatic head
-  // adenocarcinoma" مرة و"Adenocarcinoma of the head of the pancreas" مرة
-  // تانية، وده كان بيغيّر نتيجة evidenceBasis رغم إن المعنى الطبي واحد.
-  // supportingReasoning بيستخدم مصطلحات أقرب لكلام الدكتور نفسه (زي
-  // "palpable gallbladder", "jaundice") فبيديّ تطابق أثبت وأقل حساسية
-  // لاختلاف صياغة اسم التشخيص من مرة للتانية.
+  // بنفحص التطابق على اسم التشخيص و supportingReasoning كـ نصين منفصلين
+  // (OR بينهم)، مش مدموجين في نص واحد - لو دمجناهم، عدد الكلمات المهمة
+  // الكلي بيزيد وبالتالي الحد المطلوب (نص العدد) بيزيد هو كمان، وده كان
+  // بيخلي التطابق يفشل شبه دايمًا (ده كان سبب اختفاء referenceSource
+  // بالكامل تقريبًا). دلوقتي: لو أي نص من الاتنين لوحده كفى يتطابق، يبقى
+  // referenced - نفس فكرة إن اسم التشخيص بيتصاغ بصيغ مختلفة كل مرة (Gemini
+  // بـ temperature 0.3)، لكن من غير ما نعاقب المطابقة بضم نصين مع بعض.
   const computeEvidenceBasis = (diagnosisObj, sources) => {
-    const matchText = [diagnosisObj.diagnosis, diagnosisObj.supportingReasoning]
-      .filter(Boolean)
-      .join(" ");
+    const candidateTexts = [
+      diagnosisObj.diagnosis,
+      diagnosisObj.supportingReasoning,
+      // كل مرادف لوحده كنص مرشح منفصل - لو أي مرادف (زي "jaundice" أو
+      // "Courvoisier's sign") موجود حرفيًا في نص المصدر، نعتبرها تطابق
+      // حتى لو اسم التشخيص/الأسباب مستخدمين صياغة الدكتور الأصلية بس
+      ...medicalSynonyms,
+    ].filter(Boolean);
 
     const sourceOrder = ["pinecone", "pubmed", "medlineplus"];
     for (const src of sourceOrder) {
-      if (matchesReference(matchText, sources[src])) {
+      if (!sources[src]) continue;
+      const matched = candidateTexts.some((text) =>
+        matchesReference(text, sources[src]),
+      );
+      if (matched) {
         return { evidenceBasis: "referenced", referenceSource: src };
       }
     }
