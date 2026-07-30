@@ -57,9 +57,14 @@ const extractLabFileFindings = async (labFiles, language) => {
 
   try {
     const result = await chatCompletion({
-      systemPrompt: `You are given one or more attached lab result / radiology / imaging files.
+      systemPrompt: `You are given one or more attached lab result / radiology / imaging files, which may
+also include skin/lesion photographs.
 Extract ONLY the concrete factual findings, values, or observations explicitly present in them
-(e.g. "WBC 14,000", "chest X-ray shows right lower lobe consolidation", "elevated ALT/AST").
+(e.g. "WBC 14,000", "chest X-ray shows right lower lobe consolidation", "elevated ALT/AST"). For
+any skin/lesion photograph, describe ONLY the objective visual morphology you actually see (e.g.
+"well-demarcated erythematous plaque with silvery scale", "grouped vesicles on erythematous base",
+"flaccid bullae with erosions") - do NOT name a specific disease or diagnosis for it, purely
+descriptive dermatological terminology.
 Do NOT diagnose, do NOT interpret, do NOT speculate, do NOT add any commentary or headings.
 Return a short plain comma-separated list of findings only (max ~40 words total). If a file is
 unreadable, blank, or contains no extractable medical content, silently skip it. If nothing at

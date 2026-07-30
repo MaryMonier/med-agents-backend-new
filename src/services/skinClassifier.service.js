@@ -1,6 +1,14 @@
 const { SKIN_CLASSIFIER_URL } = require("../config/env");
 
-// ─── تصنيف صور الأمراض الجلدية عن طريق موديل محلي (مش Gemini) ───────────
+// الموديل مجبر رياضيًا يختار فئة من الـ 23 حتى لو الصورة أصلاً بعيدة تمامًا
+// عن كل الفئات دي (مرض مش من ضمن DermNet, صورة غير واضحة, ...). لو أعلى
+// نسبة ثقة رجعت واطية، ده مؤشر قوي إن الموديل "بيخمّن" مش "متأكد" - في
+// الحالة دي، بدل ما نحقن تصنيف غالبًا غلط في الـ prompt (وده ممكن يضلل
+// Gemini بدل ما يساعده)، بنسيب التصنيف ده تمامًا ومنبعتوش خالص. الوصف
+// النصي البصري للصورة لسه بيحصل عادي عن طريق extractLabFileFindings
+// (اللي بيشوف الصورة برضو) وبيغذي بحث PubMed/MedlinePlus بمفرده من غير
+// أي تحيز لتصنيف الموديل المحلي غير الواثق.
+const MIN_CONFIDENCE_THRESHOLD = 0.35;
 // دي خدمة بايثون منفصلة شغالة على نفس السيرفر (أو سيرفر داخلي تاني)،
 // بتحمّل موديل ViT اتعمله fine-tune على DermNet مرة واحدة وتفضل شغالة.
 // إحنا هنا بس بنبعتلها الصورة كـ base64 عن طريق HTTP، وبناخد أعلى 3
@@ -30,10 +38,7 @@ const classifySkinImage = async ({ mimeType, data }) => {
     clearTimeout(timeout);
 
     if (!response.ok) {
-      console.error(
-        "[skinClassifier] service responded with",
-        response.status,
-      );
+      console.error("[skinClassifier] service responded with", response.status);
       return null;
     }
 
@@ -59,6 +64,17 @@ const getSkinClassificationNote = async (labFiles = []) => {
     imageFiles.map(async (file) => {
       const predictions = await classifySkinImage(file);
       if (!predictions || predictions.length === 0) return null;
+
+      // لو أعلى ثقة واطية، يبقى الموديل مش لاقي نفسه فعليًا في الـ 23
+      // فئة - منحقنش تخمين ضعيف في الـ prompt، ونسيب الوصف البصري النصي
+      // (اللي بيحصل أصلاً في extractLabFileFindings) يتكفل بالبحث بمفرده
+      const topScore = predictions[0]?.score ?? 0;
+      if (topScore < MIN_CONFIDENCE_THRESHOLD) {
+        console.log(
+          `[skinClassifier] low confidence (${topScore}) for ${file.originalName || "image"} - skipping injection, relying on visual description instead`,
+        );
+        return null;
+      }
 
       const formatted = predictions
         .map((p) => `${p.label} (${Math.round(p.score * 100)}%)`)
