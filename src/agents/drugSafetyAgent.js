@@ -1,51 +1,10 @@
-const { GoogleGenAI } = require("@google/genai");
-const Groq = require("groq-sdk");
-const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
 const { checkInteractions } = require("../services/openFDA.service");
 const { retrieve, formatContext } = require("../services/pinecone.service"); // ✅ pinecone مش rag
+// كل منطق الـ fallback (Gemini -> DeepSeek -> NVIDIA) موحّد دلوقتي في
+// llm.service.js بدل ما يتكرر هنا.
+const { callLLM: sharedCallLLM } = require("../services/llm.service");
 
-const gemini = GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
-  : null;
-const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
-
-const GEMINI_MODEL = "gemini-2.5-flash";
-const GROQ_MODEL = "openai/gpt-oss-120b";
-
-// ✅ نفس الـ fallback بتاع medicalAgent (Gemini أول، Groq لو فشلت)
-const callLLM = async ({ messages, temperature, max_tokens }) => {
-  const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
-  const userMessage = messages.find((m) => m.role === "user")?.content || "";
-
-  try {
-    if (!gemini) throw new Error("Gemini API key مش موجود");
-
-    const response = await gemini.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: userMessage,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature,
-        maxOutputTokens: max_tokens,
-      },
-    });
-    const finishReason = response.candidates?.[0]?.finishReason || "STOP";
-    return {
-      choices: [{ message: { content: response.text }, finish_reason: finishReason }],
-    };
-  } catch (err) {
-    console.log("Gemini failed, falling back to Groq...", err.message);
-
-    if (!groqClient) throw new Error("لا Gemini ولا Groq شغالين");
-
-    return await groqClient.chat.completions.create({
-      messages,
-      temperature,
-      max_tokens,
-      model: GROQ_MODEL,
-    });
-  }
-};
+const callLLM = (params) => sharedCallLLM({ thinkingBudget: 300, ...params });
 
 const runDrugSafetyAgent = async ({
   medications = [],

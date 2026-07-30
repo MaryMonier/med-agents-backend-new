@@ -1,6 +1,3 @@
-const { GoogleGenAI } = require("@google/genai");
-const Groq = require("groq-sdk");
-const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
 const { searchDrug } = require("../services/openFDA.service");
 const { retrieve, formatContext } = require("../services/pinecone.service");
 const { searchPubMed, formatPubMedContext } = require("../services/pubmed.service");
@@ -8,59 +5,11 @@ const {
   searchMedlinePlus,
   formatMedlinePlusContext,
 } = require("../services/medlineplus.service");
+// كل منطق الـ fallback (Gemini -> DeepSeek -> NVIDIA) موحّد دلوقتي في
+// llm.service.js بدل ما يتكرر هنا. thinkingBudget: 1024 زي ما كان قديمًا.
+const { callLLM: sharedCallLLM } = require("../services/llm.service");
 
-const gemini = GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
-  : null;
-const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
-
-const GEMINI_MODEL = "gemini-2.5-flash";
-const GROQ_MODEL = "openai/gpt-oss-120b";
-
-// نفس الـ fallback بتاع باقي الإيجنتس (Gemini أول، Groq لو فشلت)، مع jsonMode
-// عشان نضمن رد JSON نظيف قدر الإمكان
-const callLLM = async ({
-  messages,
-  temperature,
-  max_tokens,
-  jsonMode = false,
-}) => {
-  const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
-  const userMessage = messages.find((m) => m.role === "user")?.content || "";
-
-  try {
-    if (!gemini) throw new Error("Gemini API key مش موجود");
-
-    const response = await gemini.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: userMessage,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature,
-        maxOutputTokens: max_tokens,
-        // بدل ما نقفل التفكير تمامًا (0)، بنديله ميزانية صغيرة (256 توكن) -
-        // كفاية إنه "يفكر" شوية في اختيار الدواء المناسب، بس من غير ما ياكل
-        // كل ميزانية الـ maxOutputTokens ويسبب قطع في الـ JSON زي الأول
-        thinkingConfig: { thinkingBudget: 1024 },
-        ...(jsonMode ? { responseMimeType: "application/json" } : {}),
-      },
-    });
-
-    return { choices: [{ message: { content: response.text } }] };
-  } catch (err) {
-    console.log("Gemini failed, falling back to Groq...", err.message);
-
-    if (!groqClient) throw new Error("لا Gemini ولا Groq شغالين");
-
-    return await groqClient.chat.completions.create({
-      messages,
-      temperature,
-      max_tokens,
-      model: GROQ_MODEL,
-      ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-    });
-  }
-};
+const callLLM = (params) => sharedCallLLM({ thinkingBudget: 1024, ...params });
 
 // لو الموديل رجّع كلام زيادة قبل/بعد الـ JSON
 const extractJson = (text) => {

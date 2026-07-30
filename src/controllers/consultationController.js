@@ -746,7 +746,7 @@ const getMedicationSuggestions = async (req, res) => {
 
     if (patientId) {
       const patient = await Patient.findById(patientId).select(
-        "allergies dateOfBirth",
+        "allergies dateOfBirth chronicMedications",
       );
       if (patient) {
         allergies = patient.allergies || [];
@@ -761,6 +761,33 @@ const getMedicationSuggestions = async (req, res) => {
         }
       }
       activeMedications = await getAllActiveMedicationsForPatient(patientId);
+
+      // ✅ activeMedications فوق جاية بس من روشتات فعلية اتكتبت قبل كده في
+      // النظام (Prescription history) - لو الدكتور كتب دواء كرونيك في بيانات
+      // المريض (patient.chronicMedications) بس لسه معملوش أي روشتة بيه خالص
+      // جوه النظام، كان مش هيظهر هنا أصلًا والإيجنت كان هيقترح من غير ما
+      // يعرف عنه. بنضيفه هنا (لو مش موجود بالفعل بنفس الاسم) عشان الإيجنت
+      // يراعيه من أول استشارة، مش بس بعد ما يتكتب في روشتة حقيقية.
+      if (patient?.chronicMedications?.length) {
+        const existingNames = new Set(
+          activeMedications.map((m) => m.name.trim().toLowerCase()),
+        );
+        patient.chronicMedications.forEach((name) => {
+          const trimmed = (name || "").trim();
+          if (!trimmed || existingNames.has(trimmed.toLowerCase())) return;
+          activeMedications.push({
+            name: trimmed,
+            activeIngredient: null,
+            dosageAmount: null,
+            dosageUnit: null,
+            frequencyCount: null,
+            frequencyPeriod: null,
+            isChronic: true,
+            endsOn: null,
+          });
+          existingNames.add(trimmed.toLowerCase());
+        });
+      }
 
       // عشان التنوع: بندور على زيارات سابقة لنفس المريض بنفس التشخيص
       // (تطابق نص كامل، case-insensitive) مش الفولو أب الحالي، ونجمع أسماء

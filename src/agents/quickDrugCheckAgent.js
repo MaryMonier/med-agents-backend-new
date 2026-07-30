@@ -1,69 +1,15 @@
-const { GoogleGenAI } = require("@google/genai");
-const Groq = require("groq-sdk");
-const { GEMINI_API_KEY, GROQ_API_KEY } = require("../config/env");
 const { checkInteractions } = require("../services/openFDA.service");
+// كل منطق الـ fallback (Gemini -> DeepSeek -> NVIDIA) موحّد دلوقتي في
+// llm.service.js بدل ما يتكرر هنا. thinkingBudget: 256 زي ما كان قديمًا.
+const { callLLM: sharedCallLLM } = require("../services/llm.service");
 
-const gemini = GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
-  : null;
-const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
+const callLLM = (params) => sharedCallLLM({ thinkingBudget: 256, ...params });
 
-const GEMINI_MODEL = "gemini-2.5-flash";
-const GROQ_MODEL = "openai/gpt-oss-120b";
-
-// لو الموديل (خصوصًا Groq fallback) رجّع كلام زيادة قبل/بعد الـ JSON، بنحاول
+// لو الموديل (خصوصًا الـ fallback النصي) رجّع كلام زيادة قبل/بعد الـ JSON، بنحاول
 // نلقط الـ object الأول باستخدام regex بسيط
 const extractJson = (text) => {
   const match = text.match(/\{[\s\S]*\}/);
   return match ? match[0] : text;
-};
-
-// بياخد نفس شكل الـ params القديم (messages: [{role: 'system', ...}, {role: 'user', ...}])
-// عشان أقل تعديل ممكن في باقي الكود، وبيرجع نفس شكل الرد بتاع OpenAI/Groq
-// ( response.choices[0].message.content ) عشان الكود اللي بعده متعديلش.
-const callLLM = async ({
-  messages,
-  temperature,
-  max_tokens,
-  jsonMode = false,
-}) => {
-  const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
-  const userMessage = messages.find((m) => m.role === "user")?.content || "";
-
-  try {
-    if (!gemini) throw new Error("Gemini API key مش موجود");
-
-    const response = await gemini.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: userMessage,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature,
-        maxOutputTokens: max_tokens,
-        // ✅ من غير ده، Gemini 2.5 Flash بيستهلك جزء (غالبًا كبير) من
-        // maxOutputTokens في "internal thinking" مش في الـ JSON النهائي نفسه،
-        // فكل ما الروشتة تكبر (أكتر أدوية) كل ما احتمال الرد يترقطع أو يوصل
-        // فاضي يزيد. بنحدد ميزانية تفكير صغيرة (256) عشان الغالبية العظمى من
-        // التوكينز تروح للـ JSON الفعلي اللي محتاجينه كرد.
-        thinkingConfig: { thinkingBudget: 256 },
-        ...(jsonMode ? { responseMimeType: "application/json" } : {}),
-      },
-    });
-
-    return { choices: [{ message: { content: response.text } }] };
-  } catch (err) {
-    console.log("Gemini failed, falling back to Groq...", err.message);
-
-    if (!groq) throw new Error("لا Gemini ولا Groq شغالين");
-
-    return await groq.chat.completions.create({
-      messages,
-      temperature,
-      max_tokens,
-      model: GROQ_MODEL,
-      ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-    });
-  }
 };
 
 // اسم الدواء للعرض، مع المادة الفعالة بين قوسين لو موجودة ومختلفة عن اسم البراند
