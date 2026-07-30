@@ -26,7 +26,7 @@ const nvidia = NVIDIA_API_KEY
 const GEMINI_MODEL = "gemini-2.5-flash";
 // موديل DeepSeek نفسه، لكن مستضاف مجانًا على NVIDIA NIM (مش على API
 // الرسمي المدفوع بتاع DeepSeek)
-const DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2";
+const DEEPSEEK_MODEL = "deepseek-ai/deepseek-v4-flash";
 // موديل تاني مختلف تمامًا (Llama من Meta) على نفس منصة NVIDIA - ملاذ أخير
 // لو DeepSeek نفسه كان فيه مشكلة وقتية
 const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct";
