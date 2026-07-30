@@ -1,6 +1,9 @@
 const crypto = require("crypto");
 const { chatCompletion } = require("../services/openai.service");
 const { retrieve, formatContext } = require("../services/pinecone.service");
+const {
+  getSkinClassificationNote,
+} = require("../services/skinClassifier.service");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -54,9 +57,14 @@ const extractLabFileFindings = async (labFiles, language) => {
 
   try {
     const result = await chatCompletion({
-      systemPrompt: `You are given one or more attached lab result / radiology / imaging files.
+      systemPrompt: `You are given one or more attached lab result / radiology / imaging files, which may
+also include skin/lesion photographs.
 Extract ONLY the concrete factual findings, values, or observations explicitly present in them
-(e.g. "WBC 14,000", "chest X-ray shows right lower lobe consolidation", "elevated ALT/AST").
+(e.g. "WBC 14,000", "chest X-ray shows right lower lobe consolidation", "elevated ALT/AST"). For
+any skin/lesion photograph, describe ONLY the objective visual morphology you actually see (e.g.
+"well-demarcated erythematous plaque with silvery scale", "grouped vesicles on erythematous base",
+"flaccid bullae with erosions") - do NOT name a specific disease or diagnosis for it, purely
+descriptive dermatological terminology.
 Do NOT diagnose, do NOT interpret, do NOT speculate, do NOT add any commentary or headings.
 Return a short plain comma-separated list of findings only (max ~40 words total). If a file is
 unreadable, blank, or contains no extractable medical content, silently skip it. If nothing at
@@ -181,7 +189,12 @@ const runDifferentialDiagnosisAgent = async ({
   // وبنضيف كمان أي findings اتستخرجت فعليًا من ملفات التحاليل/الأشعة
   // المرفقة (لو موجودة) - عشان بحث PubMed/MedlinePlus/Pinecone كمان يعتمد
   // على نتايج الملفات مش بس على كلام الدكتور والأعراض النصية
-  const labFileFindings = await extractLabFileFindings(labFiles, language);
+  // بيشتغلوا بالتوازي - extractLabFileFindings بتاخد وقت (نداء Gemini)،
+  // والتصنيف المحلي بيتشغّل جنبها مش وراها عشان مياخدش وقت إضافي زيادة
+  const [labFileFindings, skinClassificationNote] = await Promise.all([
+    extractLabFileFindings(labFiles, language),
+    getSkinClassificationNote(labFiles),
+  ]);
 
   // مرادفات طبية للصورة السريرية كلها (أعراض + كلام الدكتور + findings
   // الملفات) - بتتضاف لكلام الدكتور الأصلي، مش بدل منه، عشان البحث يستفيد
@@ -463,6 +476,10 @@ Use the following medical guidelines:
 ${context}
 ${followupBlock}
 STRICT RULES:
+- If an "AI skin-image classifier suggestions" line is present in the doctor input below, treat it
+  ONLY as one supplementary signal among many - it comes from a separate, imperfect, narrowly-trained
+  image model, NOT a diagnosis. Weigh it against the full clinical picture; do not let it override
+  clinical judgement, and explicitly say so if it conflicts with the rest of the presentation.
 - Respond ONLY in ${language === "ar" ? "Arabic" : "English"}
 - Output ONLY valid JSON, no extra text
 - ALWAYS factor the patient's age and gender (given below) into your reasoning BEFORE settling
@@ -541,7 +558,9 @@ on file quality.`
     labFiles.length > 0
       ? `\nAttached files (${labFiles.length}): ${labFiles
           .map((f) => f.originalName || "file")
-          .join(", ")}`
+          .join(", ")}${
+          skinClassificationNote ? `\n${skinClassificationNote}` : ""
+        }`
       : "";
 
   const userMessage = `

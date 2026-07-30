@@ -12,6 +12,11 @@ module.exports = {
   PINECONE_API_KEY: process.env.PINECONE_API_KEY,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
 
+  // عنوان خدمة تصنيف صور الأمراض الجلدية المحلية (Python/FastAPI) - شوف
+  // مجلد skin-classifier-service. لو مش موجودة القيمة دي، الميزة بتتعطل
+  // بصمت من غير ما تكسر أي حاجة تانية في التطبيق
+  SKIN_CLASSIFIER_URL: process.env.SKIN_CLASSIFIER_URL,
+
   // Paymob (Intention API - النظام الجديد)
   PAYMOB_SECRET_KEY: process.env.PAYMOB_SECRET_KEY,
   PAYMOB_PUBLIC_KEY: process.env.PAYMOB_PUBLIC_KEY,
