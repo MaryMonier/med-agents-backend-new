@@ -9,6 +9,11 @@ module.exports = {
   // ✅ مفيش DEEPSEEK_API_KEY منفصل - موديل DeepSeek نفسه بيشتغل مجانًا عن
   // طريق NVIDIA_API_KEY تحت (build.nvidia.com بيستضيفه مجانًا)
   NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+  // Kimi (Moonshot AI) - مستقل تمامًا، مش عن طريق NVIDIA
+  KIMI_API_KEY: process.env.KIMI_API_KEY,
+  // DeepSeek الرسمي (api.deepseek.com) - مستقل تمامًا عن نسخة NVIDIA
+  // القديمة، ده حساب/API منفصل بمفتاحه الخاص
+  DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
   PINECONE_API_KEY: process.env.PINECONE_API_KEY,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
 

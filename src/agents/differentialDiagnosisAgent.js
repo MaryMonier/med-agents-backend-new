@@ -74,9 +74,11 @@ all is extractable from any file, return an empty string.`,
       fileParts: labFiles.map((f) => ({ mimeType: f.mimeType, data: f.data })),
     });
 
-    // لو Gemini فشل والـ fallback كان Groq، يبقى النص اللي رجع مش شايف
-    // الملفات فعليًا - نرجّع فاضي بدل ما ندخل نص مش حقيقي في بحث المراجع
-    if (result.provider !== "gemini") return "";
+    // Gemini بيشوف كل أنواع الملفات (صور + PDF). Kimi بقى بيشوف الصور
+    // بس (مش PDF) بعد إضافة دعم vision ليه. أي مزوّد تاني (DeepSeek/NVIDIA)
+    // نصي بحت - لو الرد جه منه، يبقى فعليًا معملش الملفات خالص، فنرجّع
+    // فاضي بدل ما ندخل نص مش حقيقي في بحث المراجع
+    if (result.provider !== "gemini" && result.provider !== "kimi") return "";
 
     return (result.content || "").trim();
   } catch (err) {
@@ -883,11 +885,12 @@ Return JSON only, in this exact shape:
           data: f.data,
         })),
       });
-      // مضمون من الكود، مش افتراض - الملفات (صور/PDF) بيشوفها Gemini بس.
-      // لو الرد جه من Groq (fallback صامت لما Gemini يفشل)، الملفات
-      // المرفقة معملهاش خالص، حتى لو كانت موجودة أصلًا في الطلب
+      // مضمون من الكود، مش افتراض - الصور بيشوفها Gemini وKimi. باقي
+      // الموديلات (DeepSeek/NVIDIA) نصيين بس - لو الرد جه منهم (fallback
+      // صامت)، الملفات المرفقة معملهاش خالص، حتى لو كانت موجودة أصلًا
       const labFilesReviewed =
-        labFiles.length > 0 && result.provider === "gemini";
+        labFiles.length > 0 &&
+        (result.provider === "gemini" || result.provider === "kimi");
       const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس

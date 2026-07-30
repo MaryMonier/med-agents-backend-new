@@ -1,19 +1,38 @@
 const { GoogleGenAI } = require("@google/genai");
 const OpenAI = require("openai");
-const { GEMINI_API_KEY, NVIDIA_API_KEY } = require("../config/env");
+const {
+  GEMINI_API_KEY,
+  NVIDIA_API_KEY,
+  KIMI_API_KEY,
+  DEEPSEEK_API_KEY,
+} = require("../config/env");
 
 // ============================================================
-// الموديلات التلاتة بالترتيب: Gemini (أساسي) -> DeepSeek -> Llama
-// ✅ الاتنين (DeepSeek وLlama) بيشتغلوا من نفس المنصة المجانية بالكامل:
-// NVIDIA NIM (build.nvidia.com) - مفتاح واحد بس (NVIDIA_API_KEY)، من غير
-// كارت ائتمان. السبب إننا مش بنستخدم API الرسمي بتاع DeepSeek مباشرة: ده
-// مدفوع (مفيهوش free tier دائم)، لكن NVIDIA مستضيفة نفس موديل DeepSeek
-// مجانًا على منصتها - فبناخد نفس التنوع بين موديلين مختلفين (لو موديل واحد
-// فيه مشكلة وقتية، التاني غالبًا لأ) من غير أي تكلفة خالص.
+// الترتيب الجديد: Gemini -> Kimi -> DeepSeek (مستقل) -> Llama (على NVIDIA)
+// كل واحد فيهم بمفتاحه ومنصته الخاصة بيه - مفيش اعتماد مشترك بين حد وحد،
+// فلو منصة وقعت أو مفتاح فشل، الباقي شغالين تمامًا لوحدهم
 // ============================================================
 
 const gemini = GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
+  : null;
+
+// Kimi (Moonshot AI) - مستقل، مش عن طريق NVIDIA. الـ SDK بتاعه متوافق مع
+// OpenAI (نفس شكل client بتاع openai npm package بس بـ baseURL مختلف)
+const kimi = KIMI_API_KEY
+  ? new OpenAI({
+      apiKey: KIMI_API_KEY,
+      baseURL: "https://api.moonshot.ai/v1",
+    })
+  : null;
+
+// DeepSeek الرسمي (api.deepseek.com) - مستقل تمامًا عن نسخة DeepSeek
+// القديمة اللي كانت شغالة عن طريق NVIDIA. حساب ومفتاح منفصلين بالكامل
+const deepseek = DEEPSEEK_API_KEY
+  ? new OpenAI({
+      apiKey: DEEPSEEK_API_KEY,
+      baseURL: "https://api.deepseek.com/v1",
+    })
   : null;
 
 const nvidia = NVIDIA_API_KEY
@@ -24,11 +43,13 @@ const nvidia = NVIDIA_API_KEY
   : null;
 
 const GEMINI_MODEL = "gemini-2.5-flash";
-// موديل DeepSeek نفسه، لكن مستضاف مجانًا على NVIDIA NIM (مش على API
-// الرسمي المدفوع بتاع DeepSeek)
-const DEEPSEEK_MODEL = "deepseek-ai/deepseek-v4-flash";
-// موديل تاني مختلف تمامًا (Llama من Meta) على نفس منصة NVIDIA - ملاذ أخير
-// لو DeepSeek نفسه كان فيه مشكلة وقتية
+const KIMI_MODEL = "kimi-k3";
+// ملحوظة: "deepseek-v4" لوحدها مش ID رسمي - DeepSeek عندهم موديلين تحت
+// اسم V4: deepseek-v4-flash (أسرع وأرخص) و deepseek-v4-pro (أدق للمهام
+// الصعبة). مستخدمين flash هنا كافتراضي - غيّرها لـ deepseek-v4-pro لو
+// عايز دقة أعلى بدل السرعة
+const DEEPSEEK_MODEL = "deepseek-v4-flash";
+// موديل تاني مختلف تمامًا (Llama من Meta) على منصة NVIDIA - ملاذ أخير
 const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct";
 
 /**
@@ -37,7 +58,7 @@ const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct";
  * وبيرجع نفس شكل رد OpenAI/Groq القديم: response.choices[0].message.content
  * عشان كل الكود اللي بيستخدمه (agents) يفضل شغال من غير أي تعديل تاني.
  *
- * الترتيب: Gemini أول -> DeepSeek (على NVIDIA) لو فشل -> Llama (على NVIDIA) لو كمان فشل.
+ * الترتيب: Gemini -> Kimi -> DeepSeek (مستقل) -> Llama (على NVIDIA)
  */
 const callLLM = async ({
   messages,
@@ -46,8 +67,7 @@ const callLLM = async ({
   jsonMode = false,
   thinkingBudget = 150,
 }) => {
-  const systemPrompt =
-    messages.find((m) => m.role === "system")?.content || "";
+  const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
   const conversation = messages.filter((m) => m.role !== "system");
 
   // 1. Gemini
@@ -75,14 +95,31 @@ const callLLM = async ({
         provider: "gemini",
       };
     } catch (err) {
-      console.log("Gemini failed, falling back to DeepSeek...", err.message);
+      console.log("Gemini failed, falling back to Kimi...", err.message);
     }
   }
 
-  // 2. DeepSeek (مستضاف على NVIDIA)
-  if (nvidia) {
+  // 2. Kimi (Moonshot AI - مستقل)
+  if (kimi) {
     try {
-      const response = await nvidia.chat.completions.create({
+      const response = await kimi.chat.completions.create({
+        model: KIMI_MODEL,
+        messages,
+        temperature,
+        max_tokens,
+        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+      });
+
+      return { ...response, provider: "kimi" };
+    } catch (err) {
+      console.log("Kimi failed, falling back to DeepSeek...", err.message);
+    }
+  }
+
+  // 3. DeepSeek الرسمي (مستقل عن NVIDIA)
+  if (deepseek) {
+    try {
+      const response = await deepseek.chat.completions.create({
         model: DEEPSEEK_MODEL,
         messages,
         temperature,
@@ -96,10 +133,10 @@ const callLLM = async ({
     }
   }
 
-  // 3. Llama على NVIDIA (ملاذ أخير)
+  // 4. Llama على NVIDIA (ملاذ أخير)
   if (!nvidia) {
     throw new Error(
-      "لا Gemini ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
+      "لا Gemini ولا Kimi ولا DeepSeek ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
     );
   }
 
@@ -116,8 +153,11 @@ const callLLM = async ({
 module.exports = {
   callLLM,
   gemini,
+  kimi,
+  deepseek,
   nvidia,
   GEMINI_MODEL,
+  KIMI_MODEL,
   DEEPSEEK_MODEL,
   NVIDIA_MODEL,
 };
