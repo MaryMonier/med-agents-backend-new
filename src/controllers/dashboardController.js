@@ -109,7 +109,10 @@ const getDashboardStats = async (req, res) => {
         },
       ]),
       Followup.countDocuments({}),
-      Followup.countDocuments({ status: "confirmed", completedAt: { $ne: null } }),
+      Followup.countDocuments({
+        status: "confirmed",
+        completedAt: { $ne: null },
+      }),
       Followup.countDocuments({ status: "pending" }),
       Followup.countDocuments({ status: "cancelled" }),
     ]);
@@ -118,7 +121,8 @@ const getDashboardStats = async (req, res) => {
     const ageBuckets = { "0-18": 0, "19-40": 0, "41-60": 0, "60+": 0 };
     patientAges.forEach((p) => {
       if (!p.dateOfBirth) return;
-      const age = new Date().getFullYear() - new Date(p.dateOfBirth).getFullYear();
+      const age =
+        new Date().getFullYear() - new Date(p.dateOfBirth).getFullYear();
       if (age <= 18) ageBuckets["0-18"]++;
       else if (age <= 40) ageBuckets["19-40"]++;
       else if (age <= 60) ageBuckets["41-60"]++;
@@ -133,9 +137,9 @@ const getDashboardStats = async (req, res) => {
 
     // أكتر 5 دكاترة عندهم مرضى - بيانات الدكتور (الاسم) بتتجاب بعدين بـ populate يدوي
     const topDoctorIds = topDoctorsRaw.map((d) => d._id);
-    const topDoctorUsers = await User.find({ _id: { $in: topDoctorIds } }).select(
-      "name specialty",
-    );
+    const topDoctorUsers = await User.find({
+      _id: { $in: topDoctorIds },
+    }).select("name specialty");
     const topDoctors = topDoctorsRaw.map((d) => {
       const doc = topDoctorUsers.find((u) => String(u._id) === String(d._id));
       return {
@@ -149,7 +153,8 @@ const getDashboardStats = async (req, res) => {
     // الاشتراكات - حسب الحالة والخطة (كل الدكاترة مش صفحة واحدة بس)
     const subscriptionsByStatus = { trial: 0, active: 0, expired: 0 };
     subsByStatusRaw.forEach((s) => {
-      if (s._id in subscriptionsByStatus) subscriptionsByStatus[s._id] = s.count;
+      if (s._id in subscriptionsByStatus)
+        subscriptionsByStatus[s._id] = s.count;
     });
     const subscriptionsByPlan = {};
     subsByPlanRaw.forEach((s) => {
