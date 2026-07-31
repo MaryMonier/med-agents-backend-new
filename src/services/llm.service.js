@@ -3,35 +3,28 @@ const OpenAI = require("openai");
 const {
   GEMINI_API_KEY,
   NVIDIA_API_KEY,
-  KIMI_API_KEY,
-  DEEPSEEK_API_KEY,
+  GROQ_API_KEY,
 } = require("../config/env");
 
 // ============================================================
-// الترتيب الجديد: Gemini -> Kimi -> DeepSeek (مستقل) -> Llama (على NVIDIA)
-// كل واحد فيهم بمفتاحه ومنصته الخاصة بيه - مفيش اعتماد مشترك بين حد وحد،
-// فلو منصة وقعت أو مفتاح فشل، الباقي شغالين تمامًا لوحدهم
+// الترتيب: Gemini -> Groq (مستقل) -> Llama (على NVIDIA)
+// كل واحد فيهم بمفتاحه ومنصته الخاصة بيه - مفيش اعتماد مشترك بين حد وحد
 // ============================================================
 
 const gemini = GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
   : null;
 
-// Kimi (Moonshot AI) - مستقل، مش عن طريق NVIDIA. الـ SDK بتاعه متوافق مع
-// OpenAI (نفس شكل client بتاع openai npm package بس بـ baseURL مختلف)
-const kimi = KIMI_API_KEY
+// Groq (console.groq.com) - مستقل، مش عن طريق NVIDIA. متوافق مع صيغة
+// OpenAI. كوتة يومية مجانية سخية جدًا مقارنة بـ Gemini (1000-14400
+// طلب/يوم حسب الموديل، بدل 20 طلب/يوم بس على Gemini الفري تير). موديلات
+// Groq مفتوحة المصدر وبتتغيّر بسرعة أحيانًا (زي ما حصل مع llama-4-scout
+// اللي اتشال في يونيو 2026) - لو الموديل تحت اختفى، غيّره من هنا بس من
+// غير أي تعديل تاني في باقي الكود
+const groq = GROQ_API_KEY
   ? new OpenAI({
-      apiKey: KIMI_API_KEY,
-      baseURL: "https://api.moonshot.ai/v1",
-    })
-  : null;
-
-// DeepSeek الرسمي (api.deepseek.com) - مستقل تمامًا عن نسخة DeepSeek
-// القديمة اللي كانت شغالة عن طريق NVIDIA. حساب ومفتاح منفصلين بالكامل
-const deepseek = DEEPSEEK_API_KEY
-  ? new OpenAI({
-      apiKey: DEEPSEEK_API_KEY,
-      baseURL: "https://api.deepseek.com/v1",
+      apiKey: GROQ_API_KEY,
+      baseURL: "https://api.groq.com/openai/v1",
     })
   : null;
 
@@ -42,13 +35,16 @@ const nvidia = NVIDIA_API_KEY
     })
   : null;
 
+// موديلان من Gemini بكوتة يومية منفصلة لكل واحد فيهم (مش مشتركة) - يعني
+// عمليًا بنضاعف فرصة النجاح على Gemini نفسه قبل ما ننزل لـ Groq خالص.
+// gemini-3-flash-preview أحدث (وأقوى غالبًا) فبيتجرب الأول، ولو كوتته
+// خلصت (أو فشل لأي سبب)، بيتجرب gemini-2.5-flash قبل النزول لـ Groq
+const GEMINI_MODEL_PRIMARY = "gemini-3-flash-preview";
 const GEMINI_MODEL = "gemini-2.5-flash";
-const KIMI_MODEL = "kimi-k3";
-// ملحوظة: "deepseek-v4" لوحدها مش ID رسمي - DeepSeek عندهم موديلين تحت
-// اسم V4: deepseek-v4-flash (أسرع وأرخص) و deepseek-v4-pro (أدق للمهام
-// الصعبة). مستخدمين flash هنا كافتراضي - غيّرها لـ deepseek-v4-pro لو
-// عايز دقة أعلى بدل السرعة
-const DEEPSEEK_MODEL = "deepseek-v4-flash";
+// موديل Qwen بيقرا صور فعليًا على Groq (تحقّق يوليو 2026) - ملحوظة: حاليًا
+// preview مش production-grade رسميًا، وتشكيلة موديلات الصور على Groq
+// بتتغيّر بسرعة، فلو اختفى غيّره من هنا بس
+const GROQ_MODEL = "qwen/qwen3.6-27b";
 // موديل تاني مختلف تمامًا (Llama من Meta) على منصة NVIDIA - ملاذ أخير
 const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct";
 
@@ -58,7 +54,7 @@ const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct";
  * وبيرجع نفس شكل رد OpenAI/Groq القديم: response.choices[0].message.content
  * عشان كل الكود اللي بيستخدمه (agents) يفضل شغال من غير أي تعديل تاني.
  *
- * الترتيب: Gemini -> Kimi -> DeepSeek (مستقل) -> Llama (على NVIDIA)
+ * الترتيب: Gemini -> Groq -> Llama (على NVIDIA)
  */
 const callLLM = async ({
   messages,
@@ -70,73 +66,93 @@ const callLLM = async ({
   const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
   const conversation = messages.filter((m) => m.role !== "system");
 
-  // 1. Gemini
+  // 1. Gemini - نجرب الموديل الأحدث الأول، ولو فشل (كوتة أو أي خطأ)،
+  // نجرب موديل Gemini التاني (كوتة منفصلة) قبل ما ننزل لـ Groq
   if (gemini) {
-    try {
-      const geminiContents = conversation.map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      }));
+    const geminiContents = conversation.map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
 
-      const response = await gemini.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: geminiContents,
-        config: {
-          systemInstruction: systemPrompt,
-          temperature,
-          maxOutputTokens: max_tokens,
-          thinkingConfig: { thinkingBudget },
-          ...(jsonMode ? { responseMimeType: "application/json" } : {}),
-        },
-      });
+    for (const model of [GEMINI_MODEL_PRIMARY, GEMINI_MODEL]) {
+      try {
+        const response = await gemini.models.generateContent({
+          model,
+          contents: geminiContents,
+          config: {
+            systemInstruction: systemPrompt,
+            temperature,
+            maxOutputTokens: max_tokens,
+            thinkingConfig: { thinkingBudget },
+            ...(jsonMode ? { responseMimeType: "application/json" } : {}),
+          },
+        });
 
-      return {
-        choices: [{ message: { content: response.text } }],
-        provider: "gemini",
-      };
-    } catch (err) {
-      console.log("Gemini failed, falling back to Kimi...", err.message);
+        return {
+          choices: [{ message: { content: response.text } }],
+          provider: "gemini",
+        };
+      } catch (err) {
+        console.log(`Gemini (${model}) failed...`, err.message);
+      }
     }
+    console.log("All Gemini models failed, falling back to Groq...");
   }
 
-  // 2. Kimi (Moonshot AI - مستقل)
-  if (kimi) {
+  // 2. Groq (مستقل)
+  if (groq) {
     try {
-      const response = await kimi.chat.completions.create({
-        model: KIMI_MODEL,
+      const response = await groq.chat.completions.create({
+        model: GROQ_MODEL,
         messages,
         temperature,
         max_tokens,
         ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
       });
 
-      return { ...response, provider: "kimi" };
+      return { ...response, provider: "groq" };
     } catch (err) {
-      console.log("Kimi failed, falling back to DeepSeek...", err.message);
+      console.log(
+        "Groq failed (strict JSON mode), retrying without it...",
+        err.message,
+      );
+
+      // نفس فكرة openai.service.js - قبل ما ننزل لـ NVIDIA، نجرب Groq
+      // مرة تانية من غير إجبار JSON صارم، لأن موديل Qwen (preview)
+      // أحيانًا بيتعثر في الالتزام الصارم بالصيغة مش في الاتصال نفسه
+      if (jsonMode) {
+        try {
+          const retryMessages = messages.map((m) =>
+            m.role === "system"
+              ? {
+                  ...m,
+                  content: `${m.content}\n\nIMPORTANT: Respond with ONLY valid JSON, no extra text, no markdown code fences.`,
+                }
+              : m,
+          );
+
+          const retryResponse = await groq.chat.completions.create({
+            model: GROQ_MODEL,
+            messages: retryMessages,
+            temperature,
+            max_tokens,
+          });
+
+          return { ...retryResponse, provider: "groq" };
+        } catch (retryErr) {
+          console.log(
+            "Groq retry also failed, falling back to Llama...",
+            retryErr.message,
+          );
+        }
+      }
     }
   }
 
-  // 3. DeepSeek الرسمي (مستقل عن NVIDIA)
-  if (deepseek) {
-    try {
-      const response = await deepseek.chat.completions.create({
-        model: DEEPSEEK_MODEL,
-        messages,
-        temperature,
-        max_tokens,
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-      });
-
-      return { ...response, provider: "deepseek" };
-    } catch (err) {
-      console.log("DeepSeek failed, falling back to Llama...", err.message);
-    }
-  }
-
-  // 4. Llama على NVIDIA (ملاذ أخير)
+  // 3. Llama على NVIDIA (ملاذ أخير)
   if (!nvidia) {
     throw new Error(
-      "لا Gemini ولا Kimi ولا DeepSeek ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
+      "لا Gemini ولا Groq ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
     );
   }
 
@@ -153,11 +169,10 @@ const callLLM = async ({
 module.exports = {
   callLLM,
   gemini,
-  kimi,
-  deepseek,
+  groq,
   nvidia,
+  GEMINI_MODEL_PRIMARY,
   GEMINI_MODEL,
-  KIMI_MODEL,
-  DEEPSEEK_MODEL,
+  GROQ_MODEL,
   NVIDIA_MODEL,
 };

@@ -80,7 +80,7 @@ const getSkinClassificationNote = async (labFiles = []) => {
         .map((p) => `${p.label} (${Math.round(p.score * 100)}%)`)
         .join(", ");
 
-      return `${file.originalName || "image"}: ${formatted}`;
+      return `image ${imageFiles.indexOf(file) + 1}: ${formatted}`;
     }),
   );
 

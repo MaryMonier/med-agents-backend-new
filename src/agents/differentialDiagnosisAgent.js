@@ -60,13 +60,25 @@ const extractLabFileFindings = async (labFiles, language) => {
       systemPrompt: `You are given one or more attached lab result / radiology / imaging files, which may
 also include skin/lesion photographs.
 Extract ONLY the concrete factual findings, values, or observations explicitly present in them
-(e.g. "WBC 14,000", "chest X-ray shows right lower lobe consolidation", "elevated ALT/AST"). For
-any skin/lesion photograph, describe ONLY the objective visual morphology you actually see (e.g.
-"well-demarcated erythematous plaque with silvery scale", "grouped vesicles on erythematous base",
-"flaccid bullae with erosions") - do NOT name a specific disease or diagnosis for it, purely
-descriptive dermatological terminology.
-Do NOT diagnose, do NOT interpret, do NOT speculate, do NOT add any commentary or headings.
-Return a short plain comma-separated list of findings only (max ~40 words total). If a file is
+(e.g. "WBC 14,000", "chest X-ray shows right lower lobe consolidation", "elevated ALT/AST").
+
+For any skin/lesion photograph specifically, describe ONLY the objective visual morphology you
+actually see, covering (whichever apply, skip what's not visible):
+- primary lesion type (macule, papule, plaque, vesicle, bulla, pustule, nodule, wheal, erosion,
+  ulcer...)
+- arrangement (annular, grouped/herpetiform, linear, scattered, confluent...)
+- distribution (localized vs widespread, sun-exposed areas, flexor vs extensor surfaces,
+  symmetric vs asymmetric...)
+- color and texture (erythematous, hyperpigmented, violaceous, scaly, crusted, weeping...)
+- border characteristics (well-demarcated vs ill-defined, raised vs flat)
+- secondary changes (excoriation, lichenification, scarring, atrophy)
+Use precise dermatological terminology, but do NOT name a specific disease or diagnosis - purely
+descriptive findings only. Be as specific as the image actually allows; do not guess details you
+cannot actually see.
+
+Do NOT diagnose, do NOT interpret, do NOT speculate beyond what's visible, do NOT add any
+commentary or headings.
+Return a short plain comma-separated list of findings only (max ~60 words total). If a file is
 unreadable, blank, or contains no extractable medical content, silently skip it. If nothing at
 all is extractable from any file, return an empty string.`,
       userMessage: "Extract the findings from the attached file(s).",
@@ -74,11 +86,11 @@ all is extractable from any file, return an empty string.`,
       fileParts: labFiles.map((f) => ({ mimeType: f.mimeType, data: f.data })),
     });
 
-    // Gemini بيشوف كل أنواع الملفات (صور + PDF). Kimi بقى بيشوف الصور
-    // بس (مش PDF) بعد إضافة دعم vision ليه. أي مزوّد تاني (DeepSeek/NVIDIA)
+    // Gemini بيشوف كل أنواع الملفات (صور + PDF). Groq (موديل Qwen) بقى بيشوف الصور
+    // بس (مش PDF) بعد إضافة دعم vision ليه. أي مزوّد تاني (NVIDIA)
     // نصي بحت - لو الرد جه منه، يبقى فعليًا معملش الملفات خالص، فنرجّع
     // فاضي بدل ما ندخل نص مش حقيقي في بحث المراجع
-    if (result.provider !== "gemini" && result.provider !== "kimi") return "";
+    if (result.provider !== "gemini" && result.provider !== "groq") return "";
 
     return (result.content || "").trim();
   } catch (err) {
@@ -478,6 +490,14 @@ Use the following medical guidelines:
 ${context}
 ${followupBlock}
 STRICT RULES:
+- If a skin/lesion image or its visual findings are part of this case, and the presentation could
+  plausibly fit more than one condition with overlapping visual features (e.g. bullous/erosive
+  conditions such as pemphigus vs. pemphigoid vs. bullous lupus/SCLE; or annular/scaly conditions
+  such as psoriasis vs. subacute cutaneous lupus vs. tinea), explicitly weigh the specific
+  distinguishing features present (or absent) in the description/image before committing to one
+  diagnosis in "diagnosis" - reflect this reasoning in "supportingReasoning"/"againstReasoning"
+  rather than picking the first plausible match. Where genuine visual ambiguity remains, say so
+  explicitly and lower "likelihood" accordingly instead of presenting false certainty.
 - If an "AI skin-image classifier suggestions" line is present in the doctor input below, treat it
   ONLY as one supplementary signal among many - it comes from a separate, imperfect, narrowly-trained
   image model, NOT a diagnosis. Weigh it against the full clinical picture; do not let it override
@@ -556,11 +576,23 @@ on file quality.`
 }
     `;
 
+  // مبنبعتش originalName للموديل خالص - اسم الملف ممكن يكون مضلل عمدًا أو
+  // بالصدفة (زي "psoriasis.jpg" لصورة مرض مختلف تمامًا)، ولو اتبعت كنص
+  // جوه الـ prompt، الموديل ممكن ياخده كدليل تشخيصي غلط بدل ما يعتمد على
+  // محتوى الصورة الفعلي بس. بنبعت بس نوع الملف (صورة/PDF) ورقمه
   const labFilesNote =
     labFiles.length > 0
       ? `\nAttached files (${labFiles.length}): ${labFiles
-          .map((f) => f.originalName || "file")
-          .join(", ")}${
+          .map((f, i) =>
+            f.mimeType && f.mimeType.startsWith("image/")
+              ? `image ${i + 1}`
+              : `document ${i + 1}`,
+          )
+          .join(
+            ", ",
+          )}. IMPORTANT: base your assessment ONLY on the actual visual/textual
+content of these files, never on their filenames or labels - filenames may be
+incorrect, misleading, or irrelevant to actual content.${
           skinClassificationNote ? `\n${skinClassificationNote}` : ""
         }`
       : "";
@@ -885,12 +917,12 @@ Return JSON only, in this exact shape:
           data: f.data,
         })),
       });
-      // مضمون من الكود، مش افتراض - الصور بيشوفها Gemini وKimi. باقي
-      // الموديلات (DeepSeek/NVIDIA) نصيين بس - لو الرد جه منهم (fallback
+      // مضمون من الكود، مش افتراض - الصور بيشوفها Gemini وGroq. باقي
+      // الموديلات (NVIDIA) نصيين بس - لو الرد جه منهم (fallback
       // صامت)، الملفات المرفقة معملهاش خالص، حتى لو كانت موجودة أصلًا
       const labFilesReviewed =
         labFiles.length > 0 &&
-        (result.provider === "gemini" || result.provider === "kimi");
+        (result.provider === "gemini" || result.provider === "groq");
       const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس
