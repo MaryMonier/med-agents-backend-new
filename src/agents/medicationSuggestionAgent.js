@@ -1,6 +1,9 @@
 const { searchDrug } = require("../services/openFDA.service");
 const { retrieve, formatContext } = require("../services/pinecone.service");
-const { searchPubMed, formatPubMedContext } = require("../services/pubmed.service");
+const {
+  searchPubMed,
+  formatPubMedContext,
+} = require("../services/pubmed.service");
 const {
   searchMedlinePlus,
   formatMedlinePlusContext,
@@ -11,10 +14,39 @@ const { callLLM: sharedCallLLM } = require("../services/llm.service");
 
 const callLLM = (params) => sharedCallLLM({ thinkingBudget: 1024, ...params });
 
+// طبقة أمان أخيرة: بعض الموديلات (خصوصًا Groq/NVIDIA كـ fallback) ممكن
+// ترجّع JSON فيه خطأ بنيوي بسيط (علامة تنصيص جوه قيمة نصية، فاصلة زيادة،
+// قوس مش مقفول...) - jsonrepair بتحاول تصلح المشاكل الشائعة دي قبل ما
+// نستسلم تمامًا ونرجّع "couldn't parse" للدكتور
+const { jsonrepair } = require("jsonrepair");
+
 // لو الموديل رجّع كلام زيادة قبل/بعد الـ JSON
 const extractJson = (text) => {
   const match = text.match(/\{[\s\S]*\}/);
   return match ? match[0] : text;
+};
+
+// طبقة أمان أخيرة - أخيرة (بعد JSON.parse العادي وبعد jsonrepair). بعض
+// الموديلات (شفناها فعليًا مع Llama/NVIDIA) بتكسر الغلاف الخارجي للـ
+// JSON (زي استخدام علامة تنصيص مفردة ' بدل مزدوجة " في مفتاح
+// "medications" نفسه) بشكل jsonrepair بتصلحه شكليًا بس بتفقد فيه البنية
+// الأصلية (array بيتحول لكائن غريب). هنا بنتجاهل الغلاف الخارجي تمامًا
+// ونستخرج مباشرة أي كائنات شكلها دواء (فيها "name" و"reason") بالـ regex
+// - أضعف دقة من JSON.parse لكنها بتنقذ البيانات لما البنية الخارجية تتلف
+const extractMedicationObjectsFallback = (text) => {
+  const objectPattern =
+    /\{[^{}]*"name"\s*:\s*"[^"]*"[^{}]*"reason"\s*:\s*"[^"]*"[^{}]*\}/g;
+  const matches = text.match(objectPattern) || [];
+
+  const medications = [];
+  for (const raw of matches) {
+    try {
+      medications.push(JSON.parse(raw));
+    } catch {
+      // كائن واحد اتلف بشكل أعمق من اللازم - نتجاهله بس مش نفشل الكل
+    }
+  }
+  return medications;
 };
 
 // فحص برمجي فعلي (مش مجرد تعليمة في الـ prompt) - بيدور في نص FDA
@@ -24,7 +56,8 @@ const extractJson = (text) => {
 const checkAllergyConflict = (med, allergies) => {
   if (!allergies || allergies.length === 0) return null;
 
-  const haystack = `${med.name || ""} ${med.activeIngredient || ""}`.toLowerCase();
+  const haystack =
+    `${med.name || ""} ${med.activeIngredient || ""}`.toLowerCase();
   const hit = allergies.find(
     (a) => a && haystack.includes(String(a).toLowerCase().trim()),
   );
@@ -125,12 +158,19 @@ const runMedicationSuggestionAgent = async ({
     let guidelineContext = "";
     let guidelineSourceUsed = null; // 'pinecone' | 'pubmed' | 'medlineplus' | null
 
-    const pineconeDocs = await retrieve(`${diagnosis} treatment guideline first line`, language, 3);
+    const pineconeDocs = await retrieve(
+      `${diagnosis} treatment guideline first line`,
+      language,
+      3,
+    );
     if (pineconeDocs.length > 0) {
       guidelineContext = formatContext(pineconeDocs, language);
       guidelineSourceUsed = "pinecone";
     } else {
-      const pubmedDocs = await searchPubMed(`${diagnosis} treatment guideline`, 3);
+      const pubmedDocs = await searchPubMed(
+        `${diagnosis} treatment guideline`,
+        3,
+      );
       if (pubmedDocs.length > 0) {
         guidelineContext = formatPubMedContext(pubmedDocs);
         guidelineSourceUsed = "pubmed";
@@ -239,7 +279,46 @@ IMPORTANT: Reply with ONLY the raw JSON object. No markdown, no explanation, no 
         .replace(/```$/, "")
         .trim();
 
-      return JSON.parse(extractJson(cleaned));
+      const jsonCandidate = extractJson(cleaned);
+
+      // بيتحقق إن النتيجة فعلاً فيها مصفوفة أدوية صحيحة، مش بس JSON صحيح
+      // شكليًا - jsonrepair ممكن "تصلح" الصياغة لكن تفقد بنية الـ array
+      // الأصلية (شفناها فعليًا مع Llama: مفتاح "medications" اتكسر
+      // بعلامة تنصيص مفردة، فبقى الناتج كائن غريب مش array)
+      const hasValidMedsArray = (obj) =>
+        obj && Array.isArray(obj.medications) && obj.medications.length > 0;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonCandidate);
+      } catch (parseErr) {
+        // محاولة بالترميم قبل ما نستسلم - مفيدة تحديدًا لما يكون فيه
+        // علامة تنصيص جوه قيمة نصية أو فاصلة/قوس ناقص، مش لما يكون
+        // الرد مقطوع بالكامل من نص أصلاً (jsonrepair مش هتخترع بيانات)
+        try {
+          parsed = JSON.parse(jsonrepair(jsonCandidate));
+        } catch (repairErr) {
+          parsed = null;
+        }
+      }
+
+      if (hasValidMedsArray(parsed)) return parsed;
+
+      // لسه معندناش array صحيح (سواء JSON.parse فشل تمامًا، أو نجح لكن
+      // بنية "medications" اتلفت زي ما حصل مع Llama) - آخر محاولة: نستخرج
+      // كائنات الأدوية مباشرة بالـ regex من النص الخام، بغض النظر عن حالة
+      // الغلاف الخارجي
+      const fallbackMeds = extractMedicationObjectsFallback(cleaned);
+      if (fallbackMeds.length > 0) {
+        console.log(
+          `Medication Suggestion Agent: recovered ${fallbackMeds.length} medication(s) via regex fallback after malformed JSON wrapper`,
+        );
+        return { medications: fallbackMeds };
+      }
+
+      throw new Error(
+        "Could not extract any valid medication objects from response",
+      );
     };
 
     // ─── الخطوة 2: الاقتراح الأولي ───────────────────────────────────────────
@@ -268,6 +347,10 @@ IMPORTANT: Reply with ONLY the raw JSON object. No markdown, no explanation, no 
     const draftMeds = Array.isArray(draft.medications) ? draft.medications : [];
 
     if (draftMeds.length === 0) {
+      console.log(
+        "Medication Suggestion Agent: draft parsed OK but medications is empty/missing. Raw draft:",
+        JSON.stringify(draft),
+      );
       return { success: true, data: [] };
     }
 
@@ -290,7 +373,10 @@ IMPORTANT: Reply with ONLY the raw JSON object. No markdown, no explanation, no 
           draftMeds.map((m) => searchDrug(m.activeIngredient || m.name)),
         );
       } catch (fdaErr) {
-        console.error("Medication Suggestion Agent: FDA lookup failed:", fdaErr.message);
+        console.error(
+          "Medication Suggestion Agent: FDA lookup failed:",
+          fdaErr.message,
+        );
         // مفيش FDA data متاحة - هنكمل بالخطة الأولية زي ما هي، مع evidenceBasis
         // مناسب (general_knowledge)، بدل ما نوقف كل حاجة عشان الـ API الخارجي وقع
       }
@@ -344,8 +430,15 @@ Guideline reference used for the original diagnosis choice: ${guidelineSourceUse
 Reply with ONLY the raw JSON object.`;
 
       try {
-        const refined = await callAndParse(refineSystemPrompt, refineUserPrompt, 2800);
-        if (Array.isArray(refined.medications) && refined.medications.length > 0) {
+        const refined = await callAndParse(
+          refineSystemPrompt,
+          refineUserPrompt,
+          2800,
+        );
+        if (
+          Array.isArray(refined.medications) &&
+          refined.medications.length > 0
+        ) {
           finalMeds = refined.medications;
           usedRefinementPass = true;
         }

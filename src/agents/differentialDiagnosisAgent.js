@@ -69,16 +69,23 @@ actually see, covering (whichever apply, skip what's not visible):
 - arrangement (annular, grouped/herpetiform, linear, scattered, confluent...)
 - distribution (localized vs widespread, sun-exposed areas, flexor vs extensor surfaces,
   symmetric vs asymmetric...)
+- specific anatomical site if identifiable (e.g. face - and if face, specifically note whether
+  it follows a malar/"butterfly" pattern across cheeks and nose bridge or a different pattern;
+  scalp; trunk; oral/mucosal surfaces; palms/soles)
+- depth/severity (superficial erosion/crusting vs deep flaccid or tense bulla vs full-thickness
+  ulceration)
+- mucosal involvement if visible (oral, nasal, conjunctival erosions - present or absent)
 - color and texture (erythematous, hyperpigmented, violaceous, scaly, crusted, weeping...)
 - border characteristics (well-demarcated vs ill-defined, raised vs flat)
 - secondary changes (excoriation, lichenification, scarring, atrophy)
 Use precise dermatological terminology, but do NOT name a specific disease or diagnosis - purely
 descriptive findings only. Be as specific as the image actually allows; do not guess details you
-cannot actually see.
+cannot actually see - explicitly note if mucosal/facial-pattern information is not visible/not
+applicable rather than omitting it silently, since its absence is itself diagnostically relevant.
 
 Do NOT diagnose, do NOT interpret, do NOT speculate beyond what's visible, do NOT add any
 commentary or headings.
-Return a short plain comma-separated list of findings only (max ~60 words total). If a file is
+Return a short plain comma-separated list of findings only (max ~90 words total). If a file is
 unreadable, blank, or contains no extractable medical content, silently skip it. If nothing at
 all is extractable from any file, return an empty string.`,
       userMessage: "Extract the findings from the attached file(s).",

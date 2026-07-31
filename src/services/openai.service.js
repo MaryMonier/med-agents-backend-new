@@ -2,6 +2,7 @@ const {
   gemini,
   groq,
   nvidia,
+  isValidJson,
   GEMINI_MODEL_PRIMARY,
   GEMINI_MODEL,
   GROQ_MODEL,
@@ -74,6 +75,10 @@ const chatCompletion = async ({
           (response.usageMetadata?.promptTokenCount || 0) +
           (response.usageMetadata?.candidatesTokenCount || 0);
 
+        if (jsonMode && !isValidJson(response.text)) {
+          throw new Error("Gemini returned non-JSON content despite jsonMode");
+        }
+
         return {
           content: response.text,
           tokensUsed,
@@ -98,11 +103,17 @@ const chatCompletion = async ({
           { role: "user", content: groqUserContent },
         ],
         temperature: 0.3,
+        max_tokens: 2000,
         ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
       });
 
+      const content = response.choices[0].message.content;
+      if (jsonMode && !isValidJson(content)) {
+        throw new Error("Groq returned non-JSON content despite jsonMode");
+      }
+
       return {
-        content: response.choices[0].message.content,
+        content,
         tokensUsed: response.usage?.total_tokens || 0,
         costUSD: 0,
         latencyMs: Date.now() - startTime,
@@ -133,10 +144,18 @@ const chatCompletion = async ({
             { role: "user", content: groqUserContent },
           ],
           temperature: 0.3,
+          max_tokens: 2000,
         });
 
+        const retryContent = retryResponse.choices[0].message.content;
+        if (!isValidJson(retryContent)) {
+          throw new Error(
+            "Groq retry still returned non-JSON content - giving up on Groq",
+          );
+        }
+
         return {
-          content: retryResponse.choices[0].message.content,
+          content: retryContent,
           tokensUsed: retryResponse.usage?.total_tokens || 0,
           costUSD: 0,
           latencyMs: Date.now() - startTime,
@@ -160,6 +179,7 @@ const chatCompletion = async ({
 
   const response = await nvidia.chat.completions.create({
     model: NVIDIA_MODEL,
+    max_tokens: 2000,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },

@@ -6,6 +6,27 @@ const {
   GROQ_API_KEY,
 } = require("../config/env");
 
+// بيدوّر على أول { ... } كامل جوه النص - بيشيل أي markdown fences أو
+// preamble/postamble نصي ممكن موديل زي Qwen يحطه رغم تعليمة "JSON بس"
+const extractJsonCandidate = (text) => {
+  const match = text.match(/\{[\s\S]*\}/);
+  return match ? match[0] : text;
+};
+
+// بيتحقق فعليًا إن الرد قابل لل JSON.parse - مش بس بيفترض إن "200 OK"
+// معناها إن المحتوى سليم. موديلات زي Qwen (preview) ممكن ترجّع 200 OK
+// لكن بمحتوى مش JSON صحيح خالص (نص عادي، أو JSON ناقص) - من غير التحقق
+// ده، كنا بنرجّع "نجاح" وهمي للإيجنت اللي بعدنا، وهو اللي كان بيكتشف
+// الكسر متأخر جدًا (بعد ما فاتت فرصة النزول لمزوّد تاني تلقائيًا)
+const isValidJson = (text) => {
+  try {
+    JSON.parse(extractJsonCandidate(text));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 // ============================================================
 // الترتيب: Gemini -> Groq (مستقل) -> Llama (على NVIDIA)
 // كل واحد فيهم بمفتاحه ومنصته الخاصة بيه - مفيش اعتماد مشترك بين حد وحد
@@ -88,6 +109,10 @@ const callLLM = async ({
           },
         });
 
+        if (jsonMode && !isValidJson(response.text)) {
+          throw new Error("Gemini returned non-JSON content despite jsonMode");
+        }
+
         return {
           choices: [{ message: { content: response.text } }],
           provider: "gemini",
@@ -110,6 +135,11 @@ const callLLM = async ({
         ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
       });
 
+      const content = response.choices[0]?.message?.content || "";
+      if (jsonMode && !isValidJson(content)) {
+        throw new Error("Groq returned non-JSON content despite jsonMode");
+      }
+
       return { ...response, provider: "groq" };
     } catch (err) {
       console.log(
@@ -119,7 +149,9 @@ const callLLM = async ({
 
       // نفس فكرة openai.service.js - قبل ما ننزل لـ NVIDIA، نجرب Groq
       // مرة تانية من غير إجبار JSON صارم، لأن موديل Qwen (preview)
-      // أحيانًا بيتعثر في الالتزام الصارم بالصيغة مش في الاتصال نفسه
+      // أحيانًا بيتعثر في الالتزام الصارم بالصيغة مش في الاتصال نفسه.
+      // مهم: هنا كمان بنتحقق فعليًا من صحة الـ JSON قبل ما نعتبرها نجاح -
+      // "200 OK" من Groq مش معناه إن المحتوى قابل للاستخدام فعليًا
       if (jsonMode) {
         try {
           const retryMessages = messages.map((m) =>
@@ -138,6 +170,13 @@ const callLLM = async ({
             max_tokens,
           });
 
+          const retryContent = retryResponse.choices[0]?.message?.content || "";
+          if (!isValidJson(retryContent)) {
+            throw new Error(
+              "Groq retry still returned non-JSON content - giving up on Groq",
+            );
+          }
+
           return { ...retryResponse, provider: "groq" };
         } catch (retryErr) {
           console.log(
@@ -149,7 +188,8 @@ const callLLM = async ({
     }
   }
 
-  // 3. Llama على NVIDIA (ملاذ أخير)
+  // 3. Llama على NVIDIA (ملاذ أخير) - آخر حلقة، لو دي كمان رجّعت JSON
+  // مكسور، مفيش حاجة تانية ننزل عليها فعليًا نرمي الخطأ زي ما هو
   if (!nvidia) {
     throw new Error(
       "لا Gemini ولا Groq ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
@@ -160,6 +200,7 @@ const callLLM = async ({
     model: NVIDIA_MODEL,
     messages,
     temperature,
+    max_tokens,
     ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
   });
 
@@ -171,6 +212,7 @@ module.exports = {
   gemini,
   groq,
   nvidia,
+  isValidJson,
   GEMINI_MODEL_PRIMARY,
   GEMINI_MODEL,
   GROQ_MODEL,
