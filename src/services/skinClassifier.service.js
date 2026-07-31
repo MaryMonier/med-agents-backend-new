@@ -8,7 +8,14 @@ const { SKIN_CLASSIFIER_URL } = require("../config/env");
 // النصي البصري للصورة لسه بيحصل عادي عن طريق extractLabFileFindings
 // (اللي بيشوف الصورة برضو) وبيغذي بحث PubMed/MedlinePlus بمفرده من غير
 // أي تحيز لتصنيف الموديل المحلي غير الواثق.
-const MIN_CONFIDENCE_THRESHOLD = 0.35;
+//
+// ملحوظة مهمة (اتأكدت عمليًا): حتى لما الموديل المحلي "واثق" (فوق الحد
+// القديم 35%)، Gemini كان بيدّي وزن زيادة عن اللازم لتصنيفه حتى لو غلط
+// (زي ما حصل مع تصنيف "Lupus" غلط أثّر على تشخيص حالة كانت أصلها
+// Pemphigus). رفعنا الحد لـ 60% عشان تصنيفات الموديل المحلي (اللي أصلاً
+// دقته الكلية 70% بس على 23 فئة عامة) متوصلش لـ Gemini إلا لو ثقته
+// عالية فعلاً، فيقل عدد المرات اللي بيضلل فيها Gemini بدل ما يساعده
+const MIN_CONFIDENCE_THRESHOLD = 0.6;
 // دي خدمة بايثون منفصلة شغالة على نفس السيرفر (أو سيرفر داخلي تاني)،
 // بتحمّل موديل ViT اتعمله fine-tune على DermNet مرة واحدة وتفضل شغالة.
 // إحنا هنا بس بنبعتلها الصورة كـ base64 عن طريق HTTP، وبناخد أعلى 3
@@ -80,7 +87,7 @@ const getSkinClassificationNote = async (labFiles = []) => {
         .map((p) => `${p.label} (${Math.round(p.score * 100)}%)`)
         .join(", ");
 
-      return `${file.originalName || "image"}: ${formatted}`;
+      return `image ${imageFiles.indexOf(file) + 1}: ${formatted}`;
     }),
   );
 
