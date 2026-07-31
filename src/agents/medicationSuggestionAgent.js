@@ -14,7 +14,7 @@ const { callLLM: sharedCallLLM } = require("../services/llm.service");
 
 const callLLM = (params) => sharedCallLLM({ thinkingBudget: 1024, ...params });
 
-// طبقة أمان أخيرة: بعض الموديلات (خصوصًا Groq/NVIDIA كـ fallback) ممكن
+// طبقة أمان أخيرة: بعض الموديلات (خصوصًا NVIDIA/Llama كـ fallback) ممكن
 // ترجّع JSON فيه خطأ بنيوي بسيط (علامة تنصيص جوه قيمة نصية، فاصلة زيادة،
 // قوس مش مقفول...) - jsonrepair بتحاول تصلح المشاكل الشائعة دي قبل ما
 // نستسلم تمامًا ونرجّع "couldn't parse" للدكتور

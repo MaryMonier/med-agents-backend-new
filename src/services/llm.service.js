@@ -1,23 +1,16 @@
 const { GoogleGenAI } = require("@google/genai");
 const OpenAI = require("openai");
-const {
-  GEMINI_API_KEY,
-  NVIDIA_API_KEY,
-  GROQ_API_KEY,
-} = require("../config/env");
+const { GEMINI_API_KEY, NVIDIA_API_KEY } = require("../config/env");
 
 // بيدوّر على أول { ... } كامل جوه النص - بيشيل أي markdown fences أو
-// preamble/postamble نصي ممكن موديل زي Qwen يحطه رغم تعليمة "JSON بس"
+// preamble/postamble نصي ممكن الموديل يحطه رغم تعليمة "JSON بس"
 const extractJsonCandidate = (text) => {
   const match = text.match(/\{[\s\S]*\}/);
   return match ? match[0] : text;
 };
 
 // بيتحقق فعليًا إن الرد قابل لل JSON.parse - مش بس بيفترض إن "200 OK"
-// معناها إن المحتوى سليم. موديلات زي Qwen (preview) ممكن ترجّع 200 OK
-// لكن بمحتوى مش JSON صحيح خالص (نص عادي، أو JSON ناقص) - من غير التحقق
-// ده، كنا بنرجّع "نجاح" وهمي للإيجنت اللي بعدنا، وهو اللي كان بيكتشف
-// الكسر متأخر جدًا (بعد ما فاتت فرصة النزول لمزوّد تاني تلقائيًا)
+// معناها إن المحتوى سليم
 const isValidJson = (text) => {
   try {
     JSON.parse(extractJsonCandidate(text));
@@ -28,25 +21,14 @@ const isValidJson = (text) => {
 };
 
 // ============================================================
-// الترتيب: Gemini -> Groq (مستقل) -> Llama (على NVIDIA)
-// كل واحد فيهم بمفتاحه ومنصته الخاصة بيه - مفيش اعتماد مشترك بين حد وحد
+// الترتيب: 3 موديلات Gemini (كل واحد بكوتة يومية منفصلة) -> Llama (NVIDIA)
+// Groq اتشال خالص (كان بيقع كتير ومش موثوق) - بدالها بقينا بنستخدم عدد
+// أكبر من موديلات Gemini نفسها، بما إن كل موديل عنده "دلو" كوتة يومية
+// منفصل تمامًا عن التاني (مؤكد من رسائل الخطأ: quotaId فيه PerModel)
 // ============================================================
 
 const gemini = GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
-  : null;
-
-// Groq (console.groq.com) - مستقل، مش عن طريق NVIDIA. متوافق مع صيغة
-// OpenAI. كوتة يومية مجانية سخية جدًا مقارنة بـ Gemini (1000-14400
-// طلب/يوم حسب الموديل، بدل 20 طلب/يوم بس على Gemini الفري تير). موديلات
-// Groq مفتوحة المصدر وبتتغيّر بسرعة أحيانًا (زي ما حصل مع llama-4-scout
-// اللي اتشال في يونيو 2026) - لو الموديل تحت اختفى، غيّره من هنا بس من
-// غير أي تعديل تاني في باقي الكود
-const groq = GROQ_API_KEY
-  ? new OpenAI({
-      apiKey: GROQ_API_KEY,
-      baseURL: "https://api.groq.com/openai/v1",
-    })
   : null;
 
 const nvidia = NVIDIA_API_KEY
@@ -56,26 +38,31 @@ const nvidia = NVIDIA_API_KEY
     })
   : null;
 
-// موديلان من Gemini بكوتة يومية منفصلة لكل واحد فيهم (مش مشتركة) - يعني
-// عمليًا بنضاعف فرصة النجاح على Gemini نفسه قبل ما ننزل لـ Groq خالص.
-// gemini-3-flash-preview أحدث (وأقوى غالبًا) فبيتجرب الأول، ولو كوتته
-// خلصت (أو فشل لأي سبب)، بيتجرب gemini-2.5-flash قبل النزول لـ Groq
-const GEMINI_MODEL_PRIMARY = "gemini-3-flash-preview";
-const GEMINI_MODEL = "gemini-2.5-flash";
-// موديل Qwen بيقرا صور فعليًا على Groq (تحقّق يوليو 2026) - ملحوظة: حاليًا
-// preview مش production-grade رسميًا، وتشكيلة موديلات الصور على Groq
-// بتتغيّر بسرعة، فلو اختفى غيّره من هنا بس
-const GROQ_MODEL = "qwen/qwen3.6-27b";
+// 3 موديلات مختلفة من Gemini، بالترتيب من الأحدث/الأقوى للأقدم. كل واحد
+// فيهم كوتة يومية منفصلة تمامًا (حتى بنفس GEMINI_API_KEY) - يعني عمليًا
+// بنجرب 3 "محاولات مجانية" حقيقية قبل ما ننزل لـ NVIDIA. gemini-3.5-flash
+// هو الإصدار المستقر (GA) الأحدث بديل gemini-3-flash-preview القديم
+// (تحقّق يوليو 2026) - لو أي اسم منهم اتغيّر/اختفى مستقبلًا، غيّره من
+// هنا بس من غير أي تعديل تاني في باقي الكود
+const GEMINI_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+];
+// موجودين هنا برضو عشان أي كود قديم بيستوردهم بالاسم القديم يفضل شغال
+const GEMINI_MODEL_PRIMARY = GEMINI_MODELS[0];
+const GEMINI_MODEL = GEMINI_MODELS[GEMINI_MODELS.length - 1];
 // موديل تاني مختلف تمامًا (Llama من Meta) على منصة NVIDIA - ملاذ أخير
 const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct";
 
 /**
  * بياخد نفس شكل params اللي كل الـ agents كانت مستخدماه قديمًا:
  * { messages: [{role:'system'|'user'|'assistant', content}], temperature, max_tokens, jsonMode, thinkingBudget }
- * وبيرجع نفس شكل رد OpenAI/Groq القديم: response.choices[0].message.content
+ * وبيرجع نفس شكل رد OpenAI القديم: response.choices[0].message.content
  * عشان كل الكود اللي بيستخدمه (agents) يفضل شغال من غير أي تعديل تاني.
  *
- * الترتيب: Gemini -> Groq -> Llama (على NVIDIA)
+ * الترتيب: gemini-3.5-flash -> gemini-3-flash-preview -> gemini-2.5-flash
+ * -> Llama (على NVIDIA)
  */
 const callLLM = async ({
   messages,
@@ -87,15 +74,15 @@ const callLLM = async ({
   const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
   const conversation = messages.filter((m) => m.role !== "system");
 
-  // 1. Gemini - نجرب الموديل الأحدث الأول، ولو فشل (كوتة أو أي خطأ)،
-  // نجرب موديل Gemini التاني (كوتة منفصلة) قبل ما ننزل لـ Groq
+  // Gemini - نجرب كل الموديلات التلاتة بالترتيب (كل واحد كوتة منفصلة)
+  // قبل ما ننزل لـ NVIDIA
   if (gemini) {
     const geminiContents = conversation.map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
 
-    for (const model of [GEMINI_MODEL_PRIMARY, GEMINI_MODEL]) {
+    for (const model of GEMINI_MODELS) {
       try {
         const response = await gemini.models.generateContent({
           model,
@@ -121,78 +108,13 @@ const callLLM = async ({
         console.log(`Gemini (${model}) failed...`, err.message);
       }
     }
-    console.log("All Gemini models failed, falling back to Groq...");
+    console.log("All Gemini models failed, falling back to Llama...");
   }
 
-  // 2. Groq (مستقل)
-  if (groq) {
-    try {
-      const response = await groq.chat.completions.create({
-        model: GROQ_MODEL,
-        messages,
-        temperature,
-        max_tokens,
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-      });
-
-      const content = response.choices[0]?.message?.content || "";
-      if (jsonMode && !isValidJson(content)) {
-        throw new Error("Groq returned non-JSON content despite jsonMode");
-      }
-
-      return { ...response, provider: "groq" };
-    } catch (err) {
-      console.log(
-        "Groq failed (strict JSON mode), retrying without it...",
-        err.message,
-      );
-
-      // نفس فكرة openai.service.js - قبل ما ننزل لـ NVIDIA، نجرب Groq
-      // مرة تانية من غير إجبار JSON صارم، لأن موديل Qwen (preview)
-      // أحيانًا بيتعثر في الالتزام الصارم بالصيغة مش في الاتصال نفسه.
-      // مهم: هنا كمان بنتحقق فعليًا من صحة الـ JSON قبل ما نعتبرها نجاح -
-      // "200 OK" من Groq مش معناه إن المحتوى قابل للاستخدام فعليًا
-      if (jsonMode) {
-        try {
-          const retryMessages = messages.map((m) =>
-            m.role === "system"
-              ? {
-                  ...m,
-                  content: `${m.content}\n\nIMPORTANT: Respond with ONLY valid JSON, no extra text, no markdown code fences.`,
-                }
-              : m,
-          );
-
-          const retryResponse = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages: retryMessages,
-            temperature,
-            max_tokens,
-          });
-
-          const retryContent = retryResponse.choices[0]?.message?.content || "";
-          if (!isValidJson(retryContent)) {
-            throw new Error(
-              "Groq retry still returned non-JSON content - giving up on Groq",
-            );
-          }
-
-          return { ...retryResponse, provider: "groq" };
-        } catch (retryErr) {
-          console.log(
-            "Groq retry also failed, falling back to Llama...",
-            retryErr.message,
-          );
-        }
-      }
-    }
-  }
-
-  // 3. Llama على NVIDIA (ملاذ أخير) - آخر حلقة، لو دي كمان رجّعت JSON
-  // مكسور، مفيش حاجة تانية ننزل عليها فعليًا نرمي الخطأ زي ما هو
+  // Llama على NVIDIA (ملاذ أخير)
   if (!nvidia) {
     throw new Error(
-      "لا Gemini ولا Groq ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
+      "لا Gemini ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
     );
   }
 
@@ -210,11 +132,10 @@ const callLLM = async ({
 module.exports = {
   callLLM,
   gemini,
-  groq,
   nvidia,
   isValidJson,
+  GEMINI_MODELS,
   GEMINI_MODEL_PRIMARY,
   GEMINI_MODEL,
-  GROQ_MODEL,
   NVIDIA_MODEL,
 };

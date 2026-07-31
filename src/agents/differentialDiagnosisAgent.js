@@ -50,8 +50,8 @@ const setCachedRetrieval = (query, data) => {
 // نطلب منه بس "استخرج القيم/الملاحظات الموجودة فعليًا في الملفات دي كنص"
 // من غير أي تشخيص أو تفسير - وبعدين النص ده بيتضاف لمصادر البحث الأخرى.
 //
-// لو Gemini فشل ورجع fallback لـ Groq، النداء ده هيرجع فاضي عمدًا (مش نص
-// عشوائي) لأن Groq مش شايف الملفات أصلاً - رجّعله نص هيبقى مضلل مش مفيد.
+// لو Gemini فشل ورجع fallback لـ NVIDIA/Llama، النداء ده هيرجع فاضي عمدًا
+// (مش نص عشوائي) لأن NVIDIA/Llama مش شايف الملفات أصلاً - رجّعله نص هيبقى مضلل مش مفيد.
 const extractLabFileFindings = async (labFiles, language) => {
   if (!labFiles || labFiles.length === 0) return "";
 
@@ -93,11 +93,10 @@ all is extractable from any file, return an empty string.`,
       fileParts: labFiles.map((f) => ({ mimeType: f.mimeType, data: f.data })),
     });
 
-    // Gemini بيشوف كل أنواع الملفات (صور + PDF). Groq (موديل Qwen) بقى بيشوف الصور
-    // بس (مش PDF) بعد إضافة دعم vision ليه. أي مزوّد تاني (NVIDIA)
-    // نصي بحت - لو الرد جه منه، يبقى فعليًا معملش الملفات خالص، فنرجّع
-    // فاضي بدل ما ندخل نص مش حقيقي في بحث المراجع
-    if (result.provider !== "gemini" && result.provider !== "groq") return "";
+    // Gemini بس هو اللي بيشوف كل أنواع الملفات (صور + PDF). أي مزوّد تاني
+    // (NVIDIA/Llama) نصي بحت - لو الرد جه منه، يبقى فعليًا معملش الملفات
+    // خالص، فنرجّع فاضي بدل ما ندخل نص مش حقيقي في بحث المراجع
+    if (result.provider !== "gemini") return "";
 
     return (result.content || "").trim();
   } catch (err) {
@@ -192,7 +191,7 @@ const runDifferentialDiagnosisAgent = async ({
   chronicMedications = [],
   // ملفات التحاليل المعملية/تقارير الأشعة اللي الدكتور رفعها (اختياري).
   // كل عنصر: { mimeType, data (base64), originalName }. بس Gemini (مش
-  // Groq fallback) قادر يشوفهم فعليًا كصور/PDF — بنبعتهم كـ fileParts
+  // Gemini) قادر يشوفهم فعليًا كصور/PDF — بنبعتهم كـ fileParts
   // لـ chatCompletion، وبنذكرهم في الـ prompt النصي كمان عشان أي fallback
   // نصي يعرف إنهم موجودين حتى لو مش قادر يفتحهم.
   labFiles = [],
@@ -633,7 +632,7 @@ Return JSON only, in this exact shape:
 }
     `;
 
-  // الموديل (خصوصًا Groq fallback) ممكن يرجع JSON ناقص أو متلخبط من غير سبب واضح
+  // الموديل (خصوصًا NVIDIA/Llama fallback) ممكن يرجع JSON ناقص أو متلخبط من غير سبب واضح
   // كل شوية، فبدل ما نرجّع نتيجة وهمية بصمت، بنعيد المحاولة لحد 3 مرات قبل
   // ما نبلّغ الكولر بفشل حقيقي (يخلي الدكتور ميحتاجش يدوس الزرار كذا مرة بنفسه)
   const MAX_ATTEMPTS = 3;
@@ -924,12 +923,11 @@ Return JSON only, in this exact shape:
           data: f.data,
         })),
       });
-      // مضمون من الكود، مش افتراض - الصور بيشوفها Gemini وGroq. باقي
+      // مضمون من الكود، مش افتراض - الصور بيشوفها Gemini بس. باقي
       // الموديلات (NVIDIA) نصيين بس - لو الرد جه منهم (fallback
       // صامت)، الملفات المرفقة معملهاش خالص، حتى لو كانت موجودة أصلًا
       const labFilesReviewed =
-        labFiles.length > 0 &&
-        (result.provider === "gemini" || result.provider === "groq");
+        labFiles.length > 0 && result.provider === "gemini";
       const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس
@@ -997,7 +995,7 @@ Return JSON only, in this exact shape:
         groundingSourcesUsed,
         // مضمون من الكود (مش نص عام زي "الملفات اتراجعت") - true بس لو فعلًا
         // فيه ملفات مرفقة والرد جه من Gemini (القادر يشوفهم). false لو مفيش
-        // ملفات أصلًا، أو لو حصل fallback لـ Groq وقت الطلب ده تحديدًا - عشان
+        // ملفات أصلًا، أو لو حصل fallback لـ NVIDIA/Llama وقت الطلب ده تحديدًا - عشان
         // الفرونت يقدر يعرض تحذير صريح بدل ما يفترض دايمًا إن الملفات اتقرت
         labFilesReviewed,
         // القطع المنظمة الخام - يستخدمها الفرونت يعرضهم في أقسام منفصلة،
