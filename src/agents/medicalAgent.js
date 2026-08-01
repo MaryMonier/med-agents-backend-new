@@ -6,6 +6,9 @@ const { callLLM: sharedCallLLM } = require("../services/llm.service");
 // لكل الرسائل عشان نحافظ على ذاكرة المحادثة الكاملة (multi-turn) اللي
 // callLLM بتديها من غير ما نضطر نبنيها من الصفر هنا
 const { chatCompletion } = require("../services/openai.service");
+const {
+  getSkinClassificationNote,
+} = require("../services/skinClassifier.service");
 
 const callLLM = (params) => sharedCallLLM({ thinkingBudget: 150, ...params });
 
@@ -44,6 +47,42 @@ const runMedicalAgent = async ({
 
     const lastUserMessage = messages.filter((m) => m.role === "user").pop();
     const query = lastUserMessage?.content || "";
+
+    // لو فيه صورة: (1) نجرب الموديل المحلي (DermNet) كإشارة مساعدة لو
+    // ثقته عالية، (2) نستخرج وصف بصري دقيق ومحايد من Gemini (زي بالظبط
+    // اللي بيحصل في إيجنت التشخيص التفريقي) - الوصف ده بيتضاف لاستعلام
+    // البحث في PubMed/MedlinePlus عشان الإجابة تتبني على مراجع حقيقية
+    // مرتبطة بشكل الآفة الفعلي، مش بس كلام الدكتور النصي
+    let imageVisualDescription = "";
+    let skinClassificationNote = "";
+
+    if (image) {
+      skinClassificationNote = await getSkinClassificationNote([
+        { mimeType: image.mimeType, data: image.data },
+      ]);
+
+      try {
+        const descResult = await chatCompletion({
+          systemPrompt: `You are given an attached clinical/skin image.
+Describe ONLY the objective visual morphology you actually see, covering (whichever apply, skip
+what's not visible): primary lesion type (macule, papule, plaque, vesicle, bulla, pustule,
+nodule, wheal, erosion, ulcer...), arrangement (annular, grouped, linear, scattered,
+confluent...), distribution/anatomical site if identifiable, depth/severity, mucosal
+involvement if visible, color and texture, border characteristics, secondary changes
+(excoriation, lichenification, scarring, atrophy).
+Use precise dermatological terminology, but do NOT name a specific disease or diagnosis - purely
+descriptive findings only. Do not guess details you cannot actually see.
+Return a short plain comma-separated list of findings only (max ~90 words). If the image isn't a
+clinical/skin photo, or nothing relevant is extractable, return an empty string.`,
+          userMessage: "Describe this image.",
+          jsonMode: false,
+          fileParts: [{ mimeType: image.mimeType, data: image.data }],
+        });
+        imageVisualDescription = (descResult.content || "").trim();
+      } catch (err) {
+        console.log("AI Chat: image visual description failed:", err.message);
+      }
+    }
 
     const extractKeywords = (text) => {
       const stopWordsEn = [
@@ -87,7 +126,12 @@ const runMedicalAgent = async ({
       return keywords.trim() || text.trim();
     };
 
-    const pubmedQuery = extractKeywords(query);
+    // استعلام البحث: كلام الدكتور + الوصف البصري (لو موجود) - عشان
+    // PubMed/MedlinePlus يدوروا بناءً على شكل الآفة الفعلي مش بس السؤال
+    const combinedQueryText = [query, imageVisualDescription]
+      .filter(Boolean)
+      .join(" ");
+    const pubmedQuery = extractKeywords(combinedQueryText);
     const englishQuery = translateToEnglish(pubmedQuery);
     console.log("Pinecone query:", englishQuery);
 
@@ -150,7 +194,24 @@ const runMedicalAgent = async ({
           : "";
 
       const imageNote = image
-        ? "\nAn image is attached with the doctor's latest message (e.g. a clinical photo, skin lesion, rash, or scan). Analyze it as part of your answer, describing only what's actually visible - do not invent findings not shown in the image.\n"
+        ? `\nAn image is attached with the doctor's latest message (e.g. a clinical photo, skin
+lesion, rash, or scan). Analyze it directly yourself as part of your answer, describing only
+what's actually visible - do not invent findings not shown in the image.
+${
+  imageVisualDescription
+    ? `\nAn automated visual description of the image (generated separately, purely descriptive, NOT a diagnosis): ${imageVisualDescription}\n`
+    : ""
+}${
+            skinClassificationNote
+              ? `\n${skinClassificationNote}\nTreat this ONLY as one supplementary signal among many - it comes from a separate, imperfect, narrowly-trained local image model, NOT a diagnosis. Weigh it against the full clinical picture from the conversation; do not let it override your own direct analysis of the image, and say so explicitly if it conflicts with what you see.\n`
+              : ""
+          }
+If the presentation could plausibly fit more than one condition with overlapping visual features,
+explicitly weigh the specific distinguishing features present (or absent) before committing to
+one answer - and say so explicitly if genuine visual ambiguity remains, rather than presenting
+false certainty. Never treat something as clinically absent just because it isn't visible in this
+particular photo (e.g. a photo of one body area doesn't rule out involvement elsewhere) - if
+relevant, suggest the doctor examine that area directly instead of assuming it's clear.\n`
         : "";
 
       return `You are an AI medical assistant designed exclusively to help licensed doctors.
@@ -172,13 +233,19 @@ STRICT RULES:
 
     if (image) {
       // فيه صورة مرفقة - محتاجين vision، فبنستخدم chatCompletion (بتدعم
-      // fileParts). التنازل هنا: بنبعت بس آخر رسالة المستخدم + الصورة،
-      // مش تاريخ المحادثة الكامل (chatCompletion مبنية لطلب واحد مش
-      // conversation طويلة) - مقبول لأن غالبًا الصورة بتتبعت مع سؤال قائم
-      // بذاته ("ايه رأيك في الصورة دي؟") مش استمرار دقيق لحوار طويل
+      // fileParts). chatCompletion مبنية لطلب واحد مش conversation
+      // كاملة زي callLLM، فبنحط تاريخ المحادثة كنص جوه userMessage نفسه
+      // عشان الإجابة تاخد في الاعتبار كل الكلام اللي اتقال قبل كده في
+      // الشات، مش بس آخر رسالة
+      const conversationText = messages
+        .map(
+          (m) => `${m.role === "user" ? "Doctor" : "Assistant"}: ${m.content}`,
+        )
+        .join("\n");
+
       const result = await chatCompletion({
         systemPrompt,
-        userMessage: query,
+        userMessage: `Conversation so far:\n${conversationText}\n\nRespond to the doctor's latest message above, taking the full conversation context into account.`,
         jsonMode: false,
         fileParts: [{ mimeType: image.mimeType, data: image.data }],
       });
