@@ -22,6 +22,7 @@ const app = express();
 const medicalAgentRouter = require("./routes/medicalAgentRoutes");
 const reportGenRoutes = require("./routes/reportGen.routes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
+const transcriptionRoutes = require("./routes/transcriptionRoutes");
 
 app.set("trust proxy", 1);
 
@@ -71,6 +72,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/reports", reportGenRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/transcribe", transcriptionRoutes);
 
 app.use(errorHandler);
 
