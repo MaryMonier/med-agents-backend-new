@@ -93,10 +93,10 @@ all is extractable from any file, return an empty string.`,
       fileParts: labFiles.map((f) => ({ mimeType: f.mimeType, data: f.data })),
     });
 
-    // Gemini بس هو اللي بيشوف كل أنواع الملفات (صور + PDF). أي مزوّد تاني
-    // (NVIDIA/Llama) نصي بحت - لو الرد جه منه، يبقى فعليًا معملش الملفات
-    // خالص، فنرجّع فاضي بدل ما ندخل نص مش حقيقي في بحث المراجع
-    if (result.provider !== "gemini") return "";
+    // Gemini بيشوف كل أنواع الملفات (صور + PDF). NVIDIA/Llama-4-Maverick
+    // بقى بيشوف الصور بس (مش PDF) بعد التبديل لموديل multimodal مجاني.
+    // لو الرد جه من مزوّد تاني تمامًا (نظريًا مفيش دلوقتي)، نرجّع فاضي
+    if (result.provider !== "gemini" && result.provider !== "nvidia") return "";
 
     return (result.content || "").trim();
   } catch (err) {
@@ -927,7 +927,8 @@ Return JSON only, in this exact shape:
       // الموديلات (NVIDIA) نصيين بس - لو الرد جه منهم (fallback
       // صامت)، الملفات المرفقة معملهاش خالص، حتى لو كانت موجودة أصلًا
       const labFilesReviewed =
-        labFiles.length > 0 && result.provider === "gemini";
+        labFiles.length > 0 &&
+        (result.provider === "gemini" || result.provider === "nvidia");
       const cleaned = result.content.replace(/```json|```/g, "").trim();
       // لو رجع كلام زيادة قبل/بعد الـ JSON رغم json_object mode، بنطلع
       // الجزء اللي من أول { لحد آخر } بس

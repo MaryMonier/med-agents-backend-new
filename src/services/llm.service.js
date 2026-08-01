@@ -52,8 +52,11 @@ const GEMINI_MODELS = [
 // موجودين هنا برضو عشان أي كود قديم بيستوردهم بالاسم القديم يفضل شغال
 const GEMINI_MODEL_PRIMARY = GEMINI_MODELS[0];
 const GEMINI_MODEL = GEMINI_MODELS[GEMINI_MODELS.length - 1];
-// موديل تاني مختلف تمامًا (Llama من Meta) على منصة NVIDIA - ملاذ أخير
-const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct";
+// موديل Llama 4 Scout - متاح مجانًا على NVIDIA وبيدعم الصور فعليًا
+// (multimodal). ملحوظة: كان عندنا Llama 4 Maverick قبل كده، لكن NVIDIA
+// شالته رسميًا بتاريخ 27/7/2026 (رجّع 410 Gone) - Scout هو البديل
+// المدعوم حاليًا (تحقّق أغسطس 2026). نفس مفتاح NVIDIA_API_KEY الموجود
+const NVIDIA_MODEL = "meta/llama-4-scout-17b-16e-instruct";
 
 /**
  * بياخد نفس شكل params اللي كل الـ agents كانت مستخدماه قديمًا:

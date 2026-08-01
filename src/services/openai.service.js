@@ -16,8 +16,8 @@ const chatCompletion = async ({
 
   // لو فيه ملفات مرفقة (صور/PDF)، بنبني contents كـ array من parts (نص +
   // كل ملف كـ inlineData) بدل ما نبعت userMessage كـ string عادي. Gemini
-  // بس هو اللي شايف كل أنواع الملفات فعليًا (vision) — NVIDIA/Llama
-  // نصي بس (مفيش عنده الملفات دي أصلاً).
+  // بيشوف كل الأنواع (صور + PDF). NVIDIA/Llama-4-Maverick بيشوف الصور بس
+  // (image_url بصيغة OpenAI-compatible) - مش PDF.
   const geminiContents =
     fileParts.length > 0
       ? [
@@ -30,6 +30,20 @@ const chatCompletion = async ({
               })),
             ],
           },
+        ]
+      : userMessage;
+
+  const imageFileParts = fileParts.filter(
+    (f) => f.mimeType && f.mimeType.startsWith("image/"),
+  );
+  const nvidiaUserContent =
+    imageFileParts.length > 0
+      ? [
+          { type: "text", text: userMessage },
+          ...imageFileParts.map((f) => ({
+            type: "image_url",
+            image_url: { url: `data:${f.mimeType};base64,${f.data}` },
+          })),
         ]
       : userMessage;
 
@@ -70,8 +84,7 @@ const chatCompletion = async ({
     console.log("All Gemini models failed, falling back to Llama...");
   }
 
-  // Llama fallback (ملاذ أخير، على NVIDIA) - مفيش vision هنا خالص، لو
-  // كان فيه صور مرفقة، هتضيع في الخطوة دي (مفيش بديل تاني للصور غير Gemini)
+  // Llama-4-Maverick fallback (ملاذ أخير، على NVIDIA) - بيقرا صور فعليًا
   if (!nvidia) {
     throw new Error(
       "لا Gemini ولا NVIDIA شغالين — لازم تحطي API key واحد منهم على الأقل",
@@ -83,7 +96,7 @@ const chatCompletion = async ({
     max_tokens: 2000,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
+      { role: "user", content: nvidiaUserContent },
     ],
     temperature: 0.3,
     ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
